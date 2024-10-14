@@ -8,6 +8,9 @@ import numpy as np
 import tf_shell
 import tf_shell_ml
 import os
+import dp_accounting
+import signal
+import sys
 
 job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
@@ -16,10 +19,8 @@ features_party_dev = f"/job:{features_party_job}/replica:0/task:0/device:CPU:0"
 labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
 
 flags.DEFINE_float("learning_rate", 0.15, "Learning rate for training")
+flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
 flags.DEFINE_integer("epochs", 15, "Number of epochs")
-flags.DEFINE_bool(
-    "use_encryption", True, "Use Homomorphic Encryption (false is plaintext, insecure)"
-)
 flags.DEFINE_bool("fast_rotate", True, "Use fast rotation protocol")
 flags.DEFINE_enum(
     "party", "f", ["f", "l"], "Which party is this, f or l, for features or labels"
@@ -35,7 +36,32 @@ flags.DEFINE_string(
 FLAGS = flags.FLAGS
 
 
+def compute_epsilon(steps, batch_size, num_samples, noise_multiplier, target_delta):
+    """Computes epsilon value for given hyperparameters."""
+    if FLAGS.noise_multiplier == 0.0:
+        return float("inf")
+    orders = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
+    accountant = dp_accounting.rdp.RdpAccountant(orders)
+
+    sampling_probability = batch_size / num_samples
+    event = dp_accounting.SelfComposedDpEvent(
+        dp_accounting.PoissonSampledDpEvent(
+            sampling_probability, dp_accounting.GaussianDpEvent(noise_multiplier)
+        ),
+        steps,
+    )
+
+    accountant.compose(event)
+
+    return accountant.get_epsilon(target_delta=target_delta)
+
+
 def main(_):
+    # Allow killing server with control-c
+    def signal_handler(sig, frame):
+        sys.exit(0)
+    signal.signal(signal.SIGINT, signal_handler)
+
     # Set up the distributed training environment.
     if FLAGS.party == "f":
         this_job = features_party_job
@@ -58,19 +84,7 @@ def main(_):
     # features party.
     if this_job == labels_party_job:
         print(f"{this_job} server started.", flush=True)
-
-        # Allow killing server with control-c
-        import signal
-        import sys
-
-        def signal_handler(sig, frame):
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.pause()
-
-        # Wait for the features party to finish.
-        server.join()
+        server.join()  # Wait for the features party to finish.
         exit(0)
 
     # Set up training data.
@@ -79,15 +93,20 @@ def main(_):
     x_train, x_test = x_train / np.float32(255.0), x_test / np.float32(255.0)
     y_train, y_test = tf.one_hot(y_train, 10), tf.one_hot(y_test, 10)
 
+    # Limit the number of features to reduce the memory footprint for testing.
+    # x_train, x_test = x_train[:, :300], x_test[:, :300]
+
     train_dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train))
     train_dataset = train_dataset.shuffle(buffer_size=2**14).batch(2**10)
 
     val_dataset = tf.data.Dataset.from_tensor_slices((x_test, y_test))
     val_dataset = val_dataset.batch(32)
 
+    cache_path = "./cache-mnist-postscale/"
+
     # Create the model.
     model = tf_shell_ml.PostScaleSequential(
-        [
+        layers = [
             tf_shell_ml.ShellDense(
                 64,
                 activation=tf_shell_ml.relu,
@@ -100,21 +119,23 @@ def main(_):
                 use_fast_reduce_sum=FLAGS.fast_rotate,
             ),
         ],
-        # lambda: tf_shell.create_context64(
-        #     log_n=12,
-        #     main_moduli=[288230376151760897, 288230376152137729],
-        #     plaintext_modulus=4294991873,
-        #     scaling_factor=3,
-        # ),
-        lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=32,
-            scaling_factor=3,
-            noise_offset_log2=57,
+        backprop_context_fn = lambda: tf_shell.create_autocontext64(
+            log2_cleartext_sz=14,
+            scaling_factor=2**10,
+            noise_offset_log2=47,
+            cache_path=cache_path,
+            # ^ noise likely over-provisioned but no smaller primes available.
         ),
-        use_encryption=FLAGS.use_encryption,
-        needs_public_rotation_key=not FLAGS.fast_rotate,
+        noise_context_fn = lambda: tf_shell.create_autocontext64(
+            log2_cleartext_sz=14,
+            scaling_factor=8,
+            noise_offset_log2=0,
+            cache_path=cache_path,
+        ),
         labels_party_dev=labels_party_dev,
         features_party_dev=features_party_dev,
+        noise_multiplier=FLAGS.noise_multiplier,
+        cache_path=cache_path,
     )
 
     model.compile(
@@ -132,7 +153,7 @@ def main(_):
         logdir,
         write_steps_per_second=True,
         update_freq="batch",
-        profile_batch=2,
+        profile_batch='2, 3',
     )
     print(f"To start tensorboard, run: tensorboard --logdir ./ --host 0.0.0.0")
     print(f"\ttensorboard profiling requires: pip install tensorboard_plugin_profile")
@@ -144,6 +165,22 @@ def main(_):
         validation_data=val_dataset,
         callbacks=[tb],
     )
+
+    print("Training complete.")
+    print(history.history)
+    print(history.params)
+    batch_size = history.params["num_slots"] / 2
+    samples_per_epoch = 60000 - (60000 % batch_size)
+
+    # Compute the privacy budget expended.
+    eps = compute_epsilon(
+        steps=FLAGS.epochs * 60000 // batch_size,
+        batch_size=batch_size,
+        num_samples=samples_per_epoch,
+        noise_multiplier=FLAGS.noise_multiplier,
+        target_delta=1e-5,
+    )
+    print(f"Privacy budget expended: {eps}")
 
 
 if __name__ == "__main__":
