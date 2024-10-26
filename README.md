@@ -20,8 +20,7 @@ pip install -r requirements.txt
 
 ## Running
 
-The experiments can be run on a single machine or multiple (note they require
-logs of memory so a single machine may not always be sufficient).
+The experiments can be run on a single machine or multiple.
 
 To run the experiments on a single machine:
 ```bash

@@ -21,7 +21,6 @@ labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
 flags.DEFINE_float("learning_rate", 0.15, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
 flags.DEFINE_integer("epochs", 15, "Number of epochs")
-flags.DEFINE_bool("fast_rotate", True, "Use fast rotation protocol")
 flags.DEFINE_enum(
     "party", "f", ["f", "l"], "Which party is this, f or l, for features or labels"
 )
@@ -60,6 +59,7 @@ def main(_):
     # Allow killing server with control-c
     def signal_handler(sig, frame):
         sys.exit(0)
+
     signal.signal(signal.SIGINT, signal_handler)
 
     # Set up the distributed training environment.
@@ -89,12 +89,12 @@ def main(_):
 
     # Set up training data.
     (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
-    x_train, x_test = np.reshape(x_train, (-1, 784)), np.reshape(x_test, (-1, 784))
     x_train, x_test = x_train / np.float32(255.0), x_test / np.float32(255.0)
+    x_train, x_test = np.reshape(x_train, (-1, 784)), np.reshape(x_test, (-1, 784))
     y_train, y_test = tf.one_hot(y_train, 10), tf.one_hot(y_test, 10)
 
     # Limit the number of features to reduce the memory footprint for testing.
-    # x_train, x_test = x_train[:, :300], x_test[:, :300]
+    x_train, x_test = x_train[:, :250], x_test[:, :250]
 
     train_dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train))
     train_dataset = train_dataset.shuffle(buffer_size=2**14).batch(2**10)
@@ -102,33 +102,30 @@ def main(_):
     val_dataset = tf.data.Dataset.from_tensor_slices((x_test, y_test))
     val_dataset = val_dataset.batch(32)
 
-    cache_path = "./cache-mnist-postscale/"
+    cache_path = "./cache-mnist-dpsgd/"
 
-    # Create the model.
-    model = tf_shell_ml.PostScaleSequential(
-        layers = [
+    # Create the LeNet model.
+    model = tf_shell_ml.DpSgdSequential(
+        layers=[
             tf_shell_ml.ShellDense(
                 64,
                 activation=tf_shell_ml.relu,
                 activation_deriv=tf_shell_ml.relu_deriv,
-                use_fast_reduce_sum=FLAGS.fast_rotate,
             ),
             tf_shell_ml.ShellDense(
                 10,
                 activation=tf.nn.softmax,
-                use_fast_reduce_sum=FLAGS.fast_rotate,
             ),
         ],
-        backprop_context_fn = lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=14,
-            scaling_factor=2**10,
-            noise_offset_log2=47,
+        backprop_context_fn=lambda: tf_shell.create_autocontext64(
+            log2_cleartext_sz=23,
+            scaling_factor=32,
+            noise_offset_log2=14,
             cache_path=cache_path,
-            # ^ noise likely over-provisioned but no smaller primes available.
         ),
-        noise_context_fn = lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=14,
-            scaling_factor=8,
+        noise_context_fn=lambda: tf_shell.create_autocontext64(
+            log2_cleartext_sz=24,
+            scaling_factor=1,
             noise_offset_log2=0,
             cache_path=cache_path,
         ),
@@ -147,13 +144,12 @@ def main(_):
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    fast_str = "-fast" if FLAGS.fast_rotate else ""
-    logdir = os.path.abspath("") + f"/tflogs/post-scale{fast_str}-{stamp}"
+    logdir = os.path.abspath("") + f"/tflogs/post-scale-{stamp}"
     tb = tf.keras.callbacks.TensorBoard(
         logdir,
         write_steps_per_second=True,
         update_freq="batch",
-        profile_batch='2, 3',
+        profile_batch="2, 3",
     )
     print(f"To start tensorboard, run: tensorboard --logdir ./ --host 0.0.0.0")
     print(f"\ttensorboard profiling requires: pip install tensorboard_plugin_profile")
