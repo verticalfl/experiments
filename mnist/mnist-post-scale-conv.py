@@ -110,55 +110,55 @@ def main(_):
 
     cache_path = "./cache-mnist-dpsgd-conv/"
 
-    # Create the model. Note this takes roughly an hour per batch!
-    model = tf_shell_ml.DpSgdSequential(
+    # Create the model.
+    model = tf_shell_ml.PostScaleSequential(
         layers=[
-            tf_shell_ml.Conv2D(
+            keras.layers.Conv2D(
                 filters=16,
                 kernel_size=8,
                 strides=2,
                 padding="SAME",
             ),
-            tf_shell_ml.MaxPool2D(
+            keras.layers.MaxPool2D(
                 pool_size=(2, 2),
                 strides=1,
             ),
-            tf_shell_ml.Conv2D(
+            keras.layers.Conv2D(
                 filters=32,
                 kernel_size=4,
                 strides=2,
             ),
-            tf_shell_ml.MaxPool2D(
+            keras.layers.MaxPool2D(
                 pool_size=(2, 2),
                 strides=1,
             ),
-            tf_shell_ml.Flatten(),
-            tf_shell_ml.ShellDense(
+            keras.layers.Flatten(),
+            keras.layers.Dense(
                 16,
-                activation=tf_shell_ml.relu,
-                activation_deriv=tf_shell_ml.relu_deriv,  # Note: tf-shell specific
+                activation=tf.nn.relu,
             ),
-            tf_shell_ml.ShellDense(
+            keras.layers.Dense(
                 10,
                 activation=tf.nn.softmax,
             ),
         ],
         backprop_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=17,
-            scaling_factor=2,
-            noise_offset_log2=-9,
+            log2_cleartext_sz=23,
+            scaling_factor=32,
+            noise_offset_log2=14,
             cache_path=cache_path,
         ),
         noise_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=36,
+            log2_cleartext_sz=24,
             scaling_factor=1,
-            noise_offset_log2=35,
+            noise_offset_log2=0,
             cache_path=cache_path,
         ),
         labels_party_dev=labels_party_dev,
         features_party_dev=features_party_dev,
         noise_multiplier=FLAGS.noise_multiplier,
         cache_path=cache_path,
+        check_overflow_INSECURE=True,
     )
 
     model.build([None, 28, 28, 1])
