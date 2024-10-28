@@ -22,20 +22,22 @@ pip install -r requirements.txt
 
 The experiments can be run on a single machine or multiple.
 
-To run the experiments on a single machine:
+To run the experiments on the same machine on the same TensorFlow process
+(simplest):
+```bash
+python ./mnist.py --party b
+```
+
+To run the experiments on a single machine on multiple TensorFlow processes:
 ```bash
 cd mnist-post-scale
 python ./mnist.py --party l
+python ./mnist.py --party f # In another terminal
 ```
 
-In another terminal:
-```bash
-cd mnist-post-scale
-python ./mnist.py --party f
-```
-
-To run the experiments on multiple machines, specify a Tensorflow cluster spec:
+To run the experiments on multiple machines:
 
 ```bash
 python ./mnist.py --party f --cluster_spec '{ "tfshellfeatures": ["localhost:2222"], "tfshelllabels": ["localhost:2223"], }'
+python ./mnist.py --party l --cluster_spec '{ "tfshellfeatures": ["localhost:2222"], "tfshelllabels": ["localhost:2223"], }' # In another terminal
 ```

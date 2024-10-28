@@ -15,14 +15,12 @@ import sys
 job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
 labels_party_job = f"{job_prefix}labels"
-features_party_dev = f"/job:{features_party_job}/replica:0/task:0/device:CPU:0"
-labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
 
 flags.DEFINE_float("learning_rate", 0.15, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
 flags.DEFINE_integer("epochs", 15, "Number of epochs")
 flags.DEFINE_enum(
-    "party", "f", ["f", "l"], "Which party is this, f or l, for features or labels"
+    "party", "b", ["f", "l", "b"], "Which party is this, `f` `l`, or `b`, for feature, label, or both."
 )
 flags.DEFINE_string(
     "cluster_spec",
@@ -62,30 +60,39 @@ def main(_):
 
     signal.signal(signal.SIGINT, signal_handler)
 
-    # Set up the distributed training environment.
-    if FLAGS.party == "f":
-        this_job = features_party_job
+    if FLAGS.party == "b":
+        # Override the features and labels party devices.
+        labels_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
+        features_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
+
     else:
-        this_job = labels_party_job
+        # Set up the distributed training environment.
+        features_party_dev = f"/job:{features_party_job}/replica:0/task:0/device:CPU:0"
+        labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
 
-    print(FLAGS.cluster_spec)
+        if FLAGS.party == "f":
+            this_job = features_party_job
+        else:
+            this_job = labels_party_job
 
-    cluster = tf.train.ClusterSpec(eval(FLAGS.cluster_spec))
+        print(FLAGS.cluster_spec)
 
-    server = tf.distribute.Server(
-        cluster,
-        job_name=this_job,
-        task_index=0,
-    )
+        cluster = tf.train.ClusterSpec(eval(FLAGS.cluster_spec))
 
-    tf.config.experimental_connect_to_cluster(cluster)
+        server = tf.distribute.Server(
+            cluster,
+            job_name=this_job,
+            task_index=0,
+        )
 
-    # The labels party just runs the server while the training is driven by the
-    # features party.
-    if this_job == labels_party_job:
-        print(f"{this_job} server started.", flush=True)
-        server.join()  # Wait for the features party to finish.
-        exit(0)
+        tf.config.experimental_connect_to_cluster(cluster)
+
+        # The labels party just runs the server while the training is driven by the
+        # features party.
+        if this_job == labels_party_job:
+            print(f"{this_job} server started.", flush=True)
+            server.join()  # Wait for the features party to finish.
+            exit(0)
 
     # Set up training data.
     (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
@@ -140,7 +147,6 @@ def main(_):
             scaling_factor=2,
             noise_offset_log2=-20,
             cache_path=cache_path,
-            # ^ noise likely over-provisioned but no smaller primes available.
         ),
         noise_context_fn=lambda: tf_shell.create_autocontext64(
             log2_cleartext_sz=36,
@@ -184,9 +190,7 @@ def main(_):
     )
 
     print("Training complete.")
-    print(history.history)
-    print(history.params)
-    batch_size = history.params["num_slots"] / 2
+    batch_size = history.history["num_slots"][0] // 2
     samples_per_epoch = 60000 - (60000 % batch_size)
 
     # Compute the privacy budget expended.
