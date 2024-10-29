@@ -166,7 +166,6 @@ def main(_):
     model.compile(
         shell_loss=tf_shell_ml.CategoricalCrossentropy(),
         optimizer=tf.keras.optimizers.Adam(0.1),
-        loss=tf.keras.losses.CategoricalCrossentropy(),
         metrics=[tf.keras.metrics.CategoricalAccuracy()],
     )
 
@@ -179,8 +178,6 @@ def main(_):
         update_freq="batch",
         profile_batch="2, 3",
     )
-    print(f"To start tensorboard, run: tensorboard --logdir ./ --host 0.0.0.0")
-    print(f"\ttensorboard profiling requires: pip install tensorboard_plugin_profile")
 
     # Train the model.
     history = model.fit(
