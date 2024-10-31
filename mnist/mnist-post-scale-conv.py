@@ -143,13 +143,13 @@ def main(_):
             ),
         ],
         backprop_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=23,
-            scaling_factor=32,
+            log2_cleartext_sz=33,
+            scaling_factor=16,
             noise_offset_log2=14,
             cache_path=cache_path,
         ),
         noise_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=24,
+            log2_cleartext_sz=36,
             scaling_factor=1,
             noise_offset_log2=0,
             cache_path=cache_path,
@@ -158,7 +158,6 @@ def main(_):
         features_party_dev=features_party_dev,
         noise_multiplier=FLAGS.noise_multiplier,
         cache_path=cache_path,
-        check_overflow_INSECURE=True,
     )
 
     model.build([None, 28, 28, 1])
@@ -176,7 +175,7 @@ def main(_):
         logdir,
         write_steps_per_second=True,
         update_freq="batch",
-        profile_batch="2, 3",
+        profile_batch=2,
     )
 
     # Train the model.

@@ -65,3 +65,7 @@ the backprop parameters first by disabling the noise protocol and enabling the
 overflow checks. Then, set a large `noise_offset_log2` and choose an appropriate
 plaintext size and scaling factor. Then, reduce the noise offset. The same
 process can be repeated for the noise encryption context.
+
+- Tensorboard profiler has a bug where it writes data to the wrong directory.
+If you want to see profiling information, `cd tflogs/.../train/`, you should
+see a file that starts with `events.out...`. Then `mv ../plugins ./`

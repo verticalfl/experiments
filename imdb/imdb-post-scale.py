@@ -152,13 +152,13 @@ def main(_):
             ),
         ],
         backprop_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=23,
-            scaling_factor=32,
+            log2_cleartext_sz=33,
+            scaling_factor=16,
             noise_offset_log2=14,
             cache_path=cache_path,
         ),
         noise_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=24,
+            log2_cleartext_sz=36,
             scaling_factor=1,
             noise_offset_log2=0,
             cache_path=cache_path,
