@@ -188,7 +188,7 @@ def main(_):
     )
 
     print("Training complete.")
-    batch_size = history.history["num_slots"][0] // 2
+    batch_size = 2**13  # Mul depth requires larger ring degree.
     samples_per_epoch = 60000 - (60000 % batch_size)
 
     # Compute the privacy budget expended.

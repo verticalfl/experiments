@@ -193,7 +193,7 @@ def main(_):
     )
 
     print("Training complete.")
-    batch_size = history.history["num_slots"][0] // 2
+    batch_size = 2**12
     samples_per_epoch = 15000 - (15000 % batch_size)
 
     # Compute the privacy budget expended.
