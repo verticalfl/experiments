@@ -133,8 +133,11 @@ def main(_):
     cache_path = "./cache-imdb-dpsgd/"
 
     # Create the model.
-    model = tf_shell_ml.DpSgdSequential(
+    model = tf_shell_ml.PostScaleSequential(
         layers=[
+            # Note we use Shell's embedding layer here because it allows us
+            # to skip the most popular words, to match behavior of the DP-SGD
+            # model.
             tf_shell_ml.ShellEmbedding(
                 vocab_size + 1,  # +1 for OOV token.
                 embedding_dim,
@@ -149,13 +152,13 @@ def main(_):
             ),
         ],
         backprop_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=21,
-            scaling_factor=16,
-            noise_offset_log2=40,
+            log2_cleartext_sz=23,
+            scaling_factor=32,
+            noise_offset_log2=14,
             cache_path=cache_path,
         ),
         noise_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=36,
+            log2_cleartext_sz=24,
             scaling_factor=1,
             noise_offset_log2=0,
             cache_path=cache_path,
