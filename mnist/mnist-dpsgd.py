@@ -22,6 +22,7 @@ flags.DEFINE_integer("epochs", 15, "Number of epochs")
 flags.DEFINE_enum(
     "party", "b", ["f", "l", "b"], "Which party is this, `f` `l`, or `b`, for feature, label, or both."
 )
+flags.DEFINE_bool("gpu", False, "Offload jacobain computation to GPU on features party")
 flags.DEFINE_string(
     "cluster_spec",
     f"""{{
@@ -64,11 +65,19 @@ def main(_):
         # Override the features and labels party devices.
         labels_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
         features_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
+        if FLAGS.gpu:
+            jacobian_dev = f"/job:localhost/replica:0/task:0/device:GPU:0"
+        else:
+            jacobian_dev = features_party_dev
 
     else:
         # Set up the distributed training environment.
         features_party_dev = f"/job:{features_party_job}/replica:0/task:0/device:CPU:0"
         labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
+        if FLAGS.gpu:
+            jacobian_dev = f"/job:{features_party_job}/replica:0/task:0/device:GPU:0"
+        else:
+            jacobian_dev = features_party_dev
 
         if FLAGS.party == "f":
             this_job = features_party_job
@@ -100,54 +109,61 @@ def main(_):
     x_train, x_test = x_train / np.float32(255.0), x_test / np.float32(255.0)
     x_train, x_test = np.reshape(x_train, (-1, 784)), np.reshape(x_test, (-1, 784))
     y_train, y_test = tf.one_hot(y_train, 10), tf.one_hot(y_test, 10)
-
     # Limit the number of features to reduce the memory footprint for testing.
     x_train, x_test = x_train[:, :250], x_test[:, :250]
 
-    train_dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train))
-    train_dataset = train_dataset.shuffle(buffer_size=2**14).batch(2**10)
+    with tf.device(labels_party_dev):
+        labels_dataset = tf.data.Dataset.from_tensor_slices(y_train)
+        labels_dataset = labels_dataset.batch(2**10)
 
-    val_dataset = tf.data.Dataset.from_tensor_slices((x_test, y_test))
-    val_dataset = val_dataset.batch(32)
+    with tf.device(features_party_dev):
+        features_dataset = tf.data.Dataset.from_tensor_slices(x_train)
+        features_dataset = features_dataset.batch(2**10)
 
-    cache_path = "./cache-mnist-dpsgd/"
+        val_dataset = tf.data.Dataset.from_tensor_slices((x_test, y_test))
+        val_dataset = val_dataset.batch(32)
 
-    # Create the model. When using DPSGD, you must use Shell* layers.
-    model = tf_shell_ml.DpSgdSequential(
-        layers=[
-            tf_shell_ml.ShellDense(
-                64,
-                activation=tf_shell_ml.relu,
-                activation_deriv=tf_shell_ml.relu_deriv,
+        cache_path = "./cache-mnist-dpsgd/"
+
+        # Create the model. When using DPSGD, you must use Shell* layers.
+        model = tf_shell_ml.DpSgdSequential(
+            layers=[
+                tf_shell_ml.ShellDense(
+                    64,
+                    activation=tf_shell_ml.relu,
+                    activation_deriv=tf_shell_ml.relu_deriv,
+                ),
+                tf_shell_ml.ShellDense(
+                    10,
+                    activation=tf.nn.softmax,
+                ),
+            ],
+            backprop_context_fn=lambda: tf_shell.create_autocontext64(
+                log2_cleartext_sz=23,
+                scaling_factor=32,
+                noise_offset_log2=14,
+                cache_path=cache_path,
             ),
-            tf_shell_ml.ShellDense(
-                10,
-                activation=tf.nn.softmax,
+            noise_context_fn=lambda: tf_shell.create_autocontext64(
+                log2_cleartext_sz=24,
+                scaling_factor=1,
+                noise_offset_log2=0,
+                cache_path=cache_path,
             ),
-        ],
-        backprop_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=23,
-            scaling_factor=32,
-            noise_offset_log2=14,
+            labels_party_dev=labels_party_dev,
+            features_party_dev=features_party_dev,
+            noise_multiplier=FLAGS.noise_multiplier,
             cache_path=cache_path,
-        ),
-        noise_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=24,
-            scaling_factor=1,
-            noise_offset_log2=0,
-            cache_path=cache_path,
-        ),
-        labels_party_dev=labels_party_dev,
-        features_party_dev=features_party_dev,
-        noise_multiplier=FLAGS.noise_multiplier,
-        cache_path=cache_path,
-    )
+            jacobian_pfor=True,
+            jacobian_pfor_iterations=128,
+            jacobian_device=jacobian_dev,
+        )
 
-    model.compile(
-        shell_loss=tf_shell_ml.CategoricalCrossentropy(),
-        optimizer=tf.keras.optimizers.Adam(0.1),
-        metrics=[tf.keras.metrics.CategoricalAccuracy()],
-    )
+        model.compile(
+            shell_loss=tf_shell_ml.CategoricalCrossentropy(),
+            optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate),
+            metrics=[tf.keras.metrics.CategoricalAccuracy()],
+        )
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -156,12 +172,13 @@ def main(_):
         logdir,
         write_steps_per_second=True,
         update_freq="batch",
-        profile_batch="2, 3",
+        profile_batch=2,
     )
 
     # Train the model.
     history = model.fit(
-        train_dataset,
+        features_dataset,
+        labels_dataset,
         epochs=FLAGS.epochs,
         validation_data=val_dataset,
         callbacks=[tb],

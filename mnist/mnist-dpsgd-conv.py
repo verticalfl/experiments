@@ -22,6 +22,7 @@ flags.DEFINE_integer("epochs", 15, "Number of epochs")
 flags.DEFINE_enum(
     "party", "b", ["f", "l", "b"], "Which party is this, `f` `l`, or `b`, for feature, label, or both."
 )
+flags.DEFINE_bool("gpu", False, "Offload jacobain computation to GPU on features party")
 flags.DEFINE_string(
     "cluster_spec",
     f"""{{
@@ -64,11 +65,19 @@ def main(_):
         # Override the features and labels party devices.
         labels_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
         features_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
+        if FLAGS.gpu:
+            jacobian_dev = f"/job:localhost/replica:0/task:0/device:GPU:0"
+        else:
+            jacobian_dev = features_party_dev
 
     else:
         # Set up the distributed training environment.
         features_party_dev = f"/job:{features_party_job}/replica:0/task:0/device:CPU:0"
         labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
+        if FLAGS.gpu:
+            jacobian_dev = f"/job:{features_party_job}/replica:0/task:0/device:GPU:0"
+        else:
+            jacobian_dev = features_party_dev
 
         if FLAGS.party == "f":
             this_job = features_party_job
@@ -102,70 +111,82 @@ def main(_):
     )
     y_train, y_test = tf.one_hot(y_train, 10), tf.one_hot(y_test, 10)
 
-    train_dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train))
-    train_dataset = train_dataset.shuffle(buffer_size=2**14).batch(2**10)
+    with tf.device(labels_party_dev):
+        labels_dataset = tf.data.Dataset.from_tensor_slices(y_train)
+        labels_dataset = labels_dataset.batch(2**10)
 
-    val_dataset = tf.data.Dataset.from_tensor_slices((x_test, y_test))
-    val_dataset = val_dataset.batch(32)
+    with tf.device(features_party_dev):
+        features_dataset = tf.data.Dataset.from_tensor_slices(x_train)
+        features_dataset = features_dataset.batch(2**10)
 
-    cache_path = "./cache-mnist-dpsgd-conv/"
+        val_dataset = tf.data.Dataset.from_tensor_slices((x_test, y_test))
+        val_dataset = val_dataset.batch(32)
 
-    # Create the model. Note this takes roughly an hour per batch!
-    model = tf_shell_ml.DpSgdSequential(
-        layers=[
-            tf_shell_ml.Conv2D(
-                filters=16,
-                kernel_size=8,
-                strides=2,
-                padding="SAME",
+        cache_path = "./cache-mnist-dpsgd-conv/"
+
+        # Create the model. When using DPSGD, you must use Shell* layers. Note
+        # this takes roughly an hour per batch!
+        model = tf_shell_ml.DpSgdSequential(
+            layers=[
+                # Model from tensorflow-privacy tutorial. The first layer may
+                # be skipped and the model still has ~95% accuracy (plaintext,
+                # no input clipping).
+                # tf_shell_ml.Conv2D(
+                #     filters=16,
+                #     kernel_size=8,
+                #     strides=2,
+                #     padding="same",
+                #     activation=tf.nn.relu,
+                # ),
+                # tf_shell_ml.MaxPool2D(
+                #     pool_size=(2, 2),
+                #     strides=1,
+                # ),
+                tf_shell_ml.Conv2D(
+                    filters=32,
+                    kernel_size=4,
+                    strides=2,
+                    activation=tf_shell_ml.relu,
+                    activation_deriv=tf_shell_ml.relu_deriv,  # Note: tf-shell specific
+                ),
+                tf_shell_ml.MaxPool2D(
+                    pool_size=(2, 2),
+                    strides=1,
+                ),
+                tf_shell_ml.Flatten(),
+                tf_shell_ml.ShellDense(
+                    32,
+                    activation=tf_shell_ml.relu,
+                    activation_deriv=tf_shell_ml.relu_deriv,  # Note: tf-shell specific
+                ),
+                tf_shell_ml.ShellDense(
+                    10,
+                    activation=tf.nn.softmax,
+                ),
+            ],
+            backprop_context_fn=lambda: tf_shell.create_autocontext64(
+                log2_cleartext_sz=17,
+                scaling_factor=2,
+                noise_offset_log2=-9,
+                cache_path=cache_path,
             ),
-            tf_shell_ml.MaxPool2D(
-                pool_size=(2, 2),
-                strides=1,
+            noise_context_fn=lambda: tf_shell.create_autocontext64(
+                log2_cleartext_sz=36,
+                scaling_factor=1,
+                noise_offset_log2=35,
+                cache_path=cache_path,
             ),
-            tf_shell_ml.Conv2D(
-                filters=32,
-                kernel_size=4,
-                strides=2,
-            ),
-            tf_shell_ml.MaxPool2D(
-                pool_size=(2, 2),
-                strides=1,
-            ),
-            tf_shell_ml.Flatten(),
-            tf_shell_ml.ShellDense(
-                16,
-                activation=tf_shell_ml.relu,
-                activation_deriv=tf_shell_ml.relu_deriv,  # Note: tf-shell specific
-            ),
-            tf_shell_ml.ShellDense(
-                10,
-                activation=tf.nn.softmax,
-            ),
-        ],
-        backprop_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=17,
-            scaling_factor=2,
-            noise_offset_log2=-9,
+            labels_party_dev=labels_party_dev,
+            features_party_dev=features_party_dev,
+            noise_multiplier=FLAGS.noise_multiplier,
             cache_path=cache_path,
-        ),
-        noise_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=36,
-            scaling_factor=1,
-            noise_offset_log2=35,
-            cache_path=cache_path,
-        ),
-        labels_party_dev=labels_party_dev,
-        features_party_dev=features_party_dev,
-        noise_multiplier=FLAGS.noise_multiplier,
-        cache_path=cache_path,
-    )
+        )
 
     model.build([None, 28, 28, 1])
 
     model.compile(
         shell_loss=tf_shell_ml.CategoricalCrossentropy(),
-        optimizer=tf.keras.optimizers.Adam(0.1),
+        optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate),
         metrics=[tf.keras.metrics.CategoricalAccuracy()],
     )
 
@@ -176,12 +197,13 @@ def main(_):
         logdir,
         write_steps_per_second=True,
         update_freq="batch",
-        profile_batch="2, 3",
+        profile_batch=2,
     )
 
     # Train the model.
     history = model.fit(
-        train_dataset,
+        features_dataset,
+        labels_dataset,
         epochs=FLAGS.epochs,
         validation_data=val_dataset,
         callbacks=[tb],

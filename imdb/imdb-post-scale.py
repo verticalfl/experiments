@@ -27,6 +27,7 @@ flags.DEFINE_enum(
     ["f", "l", "b"],
     "Which party is this, `f` `l`, or `b`, for feature, label, or both.",
 )
+flags.DEFINE_bool("gpu", False, "Offload jacobain computation to GPU on features party")
 flags.DEFINE_string(
     "cluster_spec",
     f"""{{
@@ -69,11 +70,19 @@ def main(_):
         # Override the features and labels party devices.
         labels_party_dev = "/job:localhost/replica:0/task:0/device:CPU:0"
         features_party_dev = "/job:localhost/replica:0/task:0/device:CPU:0"
+        if FLAGS.gpu:
+            jacobian_dev = f"/job:localhost/replica:0/task:0/device:GPU:0"
+        else:
+            jacobian_dev = features_party_dev
 
     else:
         # Set up the distributed training environment.
         features_party_dev = f"/job:{features_party_job}/replica:0/task:0/device:CPU:0"
         labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
+        if FLAGS.gpu:
+            jacobian_dev = f"/job:{features_party_job}/replica:0/task:0/device:GPU:0"
+        else:
+            jacobian_dev = features_party_dev
 
         if FLAGS.party == "f":
             this_job = features_party_job
@@ -99,6 +108,8 @@ def main(_):
             server.join()  # Wait for the features party to finish.
             exit(0)
 
+    cache_path = "./cache-imdb-dpsgd/"
+
     # Set up training data. Split the training set into 60% and 40% to end up
     # with 15,000 examples for training, 10,000 examples for validation and
     # 25,000 examples for testing.
@@ -107,73 +118,80 @@ def main(_):
         split=("train[:60%]", "train[60%:]", "test"),
         as_supervised=True,
     )
-    train_data = train_data.shuffle(buffer_size=2**14).batch(2**12)
-    val_data = val_data.shuffle(buffer_size=1024).batch(32)
-    test_data = test_data.shuffle(buffer_size=1024).batch(32)
+    with tf.device(labels_party_dev):
+        # One-hot encode the labels for training data on the features party.
+        labels_dataset = train_data.map(lambda x,y: tf.one_hot(tf.cast(y, tf.int32), 2)).batch(2**12)
 
-    # Create the text vectorization layer.
-    vocab_size = 10000  # This dataset has 92061 unique words.
-    max_length = 250
-    embedding_dim = 16
-    vectorize_layer = tf.keras.layers.TextVectorization(
-        max_tokens=vocab_size,
-        output_mode="int",
-    )
-    vectorize_layer.adapt(train_data.map(lambda text, label: text))
+    with tf.device(features_party_dev):
+        features_dataset = train_data.map(lambda x,y: x).batch(2**12)
+        val_data = val_data.shuffle(buffer_size=1024).batch(32)
+        test_data = test_data.shuffle(buffer_size=1024).batch(32)
 
-    # Add the text vectorization layer as a preprocessing step in the datasets.
-    # Additionally, one-hot encode the labels.
-    def preprocess(text, label):
-        return (vectorize_layer(text), tf.one_hot(tf.cast(label, tf.int32), 2))
+        # Create the text vectorization layer.
+        vocab_size = 10000  # This dataset has 92061 unique words.
+        max_length = 250
+        embedding_dim = 16
+        vectorize_layer = tf.keras.layers.TextVectorization(
+            max_tokens=vocab_size,
+            output_mode="int",
+        )
+        vectorize_layer.adapt(features_dataset)
 
-    train_data = train_data.map(preprocess)
-    val_data = val_data.map(preprocess)
-    test_data = test_data.map(preprocess)
+        # Add the text vectorization layer as a preprocessing step in the datasets.
+        def preprocess_features(text):
+            return (vectorize_layer(text))
 
-    cache_path = "./cache-imdb-dpsgd/"
+        # Additionally, one-hot encode the labels for validation data.
+        def preprocess_all(text, label):
+            return (vectorize_layer(text), tf.one_hot(tf.cast(label, tf.int32), 2))
 
-    # Create the model.
-    model = tf_shell_ml.PostScaleSequential(
-        layers=[
-            # Note we use Shell's embedding layer here because it allows us
-            # to skip the most popular words, to match behavior of the DP-SGD
-            # model.
-            tf_shell_ml.ShellEmbedding(
-                vocab_size + 1,  # +1 for OOV token.
-                embedding_dim,
-                skip_embeddings_below_index=200,  # Skip the most common words.
+        features_dataset = features_dataset.map(preprocess_features)
+        val_data = val_data.map(preprocess_all)
+        test_data = test_data.map(preprocess_all)
+
+        # Create the model.
+        model = tf_shell_ml.PostScaleSequential(
+            layers=[
+                # Note we use Shell's embedding layer here because it allows us
+                # to skip the most popular words, to match behavior of the DP-SGD
+                # model.
+                tf_shell_ml.ShellEmbedding(
+                    vocab_size + 1,  # +1 for OOV token.
+                    embedding_dim,
+                    skip_embeddings_below_index=200,  # Skip the most common words.
+                ),
+                #tf_shell_ml.ShellDropout(0.5),
+                tf_shell_ml.GlobalAveragePooling1D(),
+                tf_shell_ml.ShellDropout(0.5),
+                tf_shell_ml.ShellDense(
+                    2,
+                    activation=tf.nn.softmax,
+                ),
+            ],
+            backprop_context_fn=lambda: tf_shell.create_autocontext64(
+                log2_cleartext_sz=33,
+                scaling_factor=16,
+                noise_offset_log2=14,
+                cache_path=cache_path,
             ),
-            #tf_shell_ml.ShellDropout(0.5),
-            tf_shell_ml.GlobalAveragePooling1D(),
-            tf_shell_ml.ShellDropout(0.5),
-            tf_shell_ml.ShellDense(
-                2,
-                activation=tf.nn.softmax,
+            noise_context_fn=lambda: tf_shell.create_autocontext64(
+                log2_cleartext_sz=36,
+                scaling_factor=1,
+                noise_offset_log2=0,
+                cache_path=cache_path,
             ),
-        ],
-        backprop_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=33,
-            scaling_factor=16,
-            noise_offset_log2=14,
+            labels_party_dev=labels_party_dev,
+            features_party_dev=features_party_dev,
+            noise_multiplier=FLAGS.noise_multiplier,
             cache_path=cache_path,
-        ),
-        noise_context_fn=lambda: tf_shell.create_autocontext64(
-            log2_cleartext_sz=36,
-            scaling_factor=1,
-            noise_offset_log2=0,
-            cache_path=cache_path,
-        ),
-        labels_party_dev=labels_party_dev,
-        features_party_dev=features_party_dev,
-        noise_multiplier=FLAGS.noise_multiplier,
-        cache_path=cache_path,
-    )
+            jacobian_device=jacobian_dev,
+        )
 
-    model.compile(
-        shell_loss=tf_shell_ml.CategoricalCrossentropy(),
-        optimizer=tf.keras.optimizers.Adam(0.1),
-        metrics=[tf.keras.metrics.CategoricalAccuracy()],
-    )
+        model.compile(
+            shell_loss=tf_shell_ml.CategoricalCrossentropy(),
+            optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate),
+            metrics=[tf.keras.metrics.CategoricalAccuracy()],
+        )
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -182,12 +200,13 @@ def main(_):
         logdir,
         write_steps_per_second=True,
         update_freq="batch",
-        profile_batch="2, 3",
+        profile_batch=2,
     )
 
     # Train the model.
     history = model.fit(
-        train_data,
+        features_dataset,
+        labels_dataset,
         epochs=FLAGS.epochs,
         validation_data=val_data,
         callbacks=[tb],

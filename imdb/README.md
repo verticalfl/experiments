@@ -9,3 +9,6 @@ These examples require additional pip packages.
 ```bash
 pip install tensorflow_hub tensorflow_datasets
 ```
+
+Note: At this time, only the single-process setting is supported (--party=b, the
+default if no flag is passed).
