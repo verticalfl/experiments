@@ -1,5 +1,13 @@
 # MNIST Model Tests
+Here are some notes about tunable hyperparameters.
 
+## Resource Requirements
+
+mnist-dpsgd.py requires 286GB of RAM.
+mnist-post-scale.py requires 380GB of RAM.
+When using a GPU, 24GB of VRAM is good, 16GB is too small.
+
+## Noise Multiplier
 To choose the appropriate noise multiplier, see `noise_multiplier_finder.py`.
 Example usage:
 ```bash
@@ -21,3 +29,11 @@ epsilon: 1.0    noise_multiplier: 3.70703125
 
 Note: all models have batch size 2**12, except `mnist_dpsgd_conv.py`, which uses
 2**13.
+
+## Learning Rate
+
+At a epsilon = .5 with 10 epochs, here are some data points on learning rate and
+accuracy:
+mnist-dpsgd.py: .15 = 75% val accuracy
+mnist-post-scale.py: .15 = 61% accuracy
+
