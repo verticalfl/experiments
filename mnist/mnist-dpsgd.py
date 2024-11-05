@@ -110,7 +110,7 @@ def main(_):
     x_train, x_test = np.reshape(x_train, (-1, 784)), np.reshape(x_test, (-1, 784))
     y_train, y_test = tf.one_hot(y_train, 10), tf.one_hot(y_test, 10)
     # Limit the number of features to reduce the memory footprint for testing.
-    x_train, x_test = x_train[:, :250], x_test[:, :250]
+    # x_train, x_test = x_train[:, :250], x_test[:, :250]
 
     with tf.device(labels_party_dev):
         labels_dataset = tf.data.Dataset.from_tensor_slices(y_train)
@@ -154,8 +154,8 @@ def main(_):
             features_party_dev=features_party_dev,
             noise_multiplier=FLAGS.noise_multiplier,
             cache_path=cache_path,
-            jacobian_pfor=True,
-            jacobian_pfor_iterations=128,
+            # jacobian_pfor=True,
+            # jacobian_pfor_iterations=128,
             jacobian_device=jacobian_dev,
         )
 
@@ -167,7 +167,7 @@ def main(_):
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    logdir = os.path.abspath("") + f"/tflogs/post-scale-{stamp}"
+    logdir = os.path.abspath("") + f"/tflogs/dpsgd-{stamp}"
     tb = tf.keras.callbacks.TensorBoard(
         logdir,
         write_steps_per_second=True,

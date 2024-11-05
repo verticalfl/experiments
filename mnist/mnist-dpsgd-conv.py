@@ -180,6 +180,7 @@ def main(_):
             features_party_dev=features_party_dev,
             noise_multiplier=FLAGS.noise_multiplier,
             cache_path=cache_path,
+            jacobian_device=jacobian_dev,
         )
 
     model.build([None, 28, 28, 1])
@@ -192,7 +193,7 @@ def main(_):
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    logdir = os.path.abspath("") + f"/tflogs/post-scale-{stamp}"
+    logdir = os.path.abspath("") + f"/tflogs/dpsgd-conv-{stamp}"
     tb = tf.keras.callbacks.TensorBoard(
         logdir,
         write_steps_per_second=True,

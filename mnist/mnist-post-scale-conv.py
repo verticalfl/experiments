@@ -195,7 +195,7 @@ def main(_):
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    logdir = os.path.abspath("") + f"/tflogs/post-scale-{stamp}"
+    logdir = os.path.abspath("") + f"/tflogs/post-scale-conv-{stamp}"
     tb = tf.keras.callbacks.TensorBoard(
         logdir,
         write_steps_per_second=True,
