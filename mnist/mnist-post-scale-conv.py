@@ -188,7 +188,7 @@ def main(_):
         model.build([None, 28, 28, 1])
 
         model.compile(
-            shell_loss=tf_shell_ml.CategoricalCrossentropy(),
+            loss=tf.keras.losses.CategoricalCrossentropy(),
             optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate),
             metrics=[tf.keras.metrics.CategoricalAccuracy()],
         )

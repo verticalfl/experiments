@@ -183,13 +183,13 @@ def main(_):
             jacobian_device=jacobian_dev,
         )
 
-    model.build([None, 28, 28, 1])
+        model.build([None, 28, 28, 1])
 
-    model.compile(
-        shell_loss=tf_shell_ml.CategoricalCrossentropy(),
-        optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate),
-        metrics=[tf.keras.metrics.CategoricalAccuracy()],
-    )
+        model.compile(
+            loss=tf.keras.losses.CategoricalCrossentropy(),
+            optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate),
+            metrics=[tf.keras.metrics.CategoricalAccuracy()],
+        )
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
