@@ -69,3 +69,14 @@ process can be repeated for the noise encryption context.
 - Tensorboard profiler has a bug where it writes data to the wrong directory.
 If you want to see profiling information, `cd tflogs/.../train/`, you should
 see a file that starts with `events.out...`. Then `mv ../plugins ./`
+
+## Set up a debain VM from scratch with CUDA
+
+```bash
+sudo add-apt-repository contrib
+sudo apt-key del 7fa2af80
+wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt update
+sudo apt install cuda git python3-pip python3-venv python-is-python3
+```
