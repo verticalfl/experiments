@@ -18,9 +18,9 @@ job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
 labels_party_job = f"{job_prefix}labels"
 
-flags.DEFINE_float("learning_rate", 0.15, "Learning rate for training")
+flags.DEFINE_float("learning_rate", 0.05, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
-flags.DEFINE_integer("epochs", 15, "Number of epochs")
+flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
     "party",
     "b",
@@ -189,7 +189,7 @@ def main(_):
 
         lr_schedule = keras.optimizers.schedules.ExponentialDecay(
             initial_learning_rate=FLAGS.learning_rate,
-            decay_steps=14,
+            decay_steps=10,
             decay_rate=0.9,
         )
 
