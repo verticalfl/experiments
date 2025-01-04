@@ -66,18 +66,20 @@ def main(_):
         labels_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
         features_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
         if FLAGS.gpu:
-            jacobian_dev = f"/job:localhost/replica:0/task:0/device:GPU:0"
+            num_gpus = len(tf.config.list_physical_devices('GPU'))
+            jacobian_dev = [f"/job:localhost/replica:0/task:0/device:GPU:{i}" for i in range(num_gpus)]
         else:
-            jacobian_dev = features_party_dev
+            jacobian_dev = None
 
     else:
         # Set up the distributed training environment.
         features_party_dev = f"/job:{features_party_job}/replica:0/task:0/device:CPU:0"
         labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
         if FLAGS.gpu:
-            jacobian_dev = f"/job:{features_party_job}/replica:0/task:0/device:GPU:0"
+            num_gpus = len(tf.config.list_physical_devices('GPU'))
+            jacobian_dev = [f"/job:{features_party_job}/replica:0/task:0/device:GPU:{i}" for i in range(num_gpus)]
         else:
-            jacobian_dev = features_party_dev
+            jacobian_dev = None
 
         if FLAGS.party == "f":
             this_job = features_party_job
