@@ -140,12 +140,12 @@ def main(_):
             ],
             backprop_context_fn=lambda: tf_shell.create_autocontext64(
                 log2_cleartext_sz=23,
-                scaling_factor=32,
-                noise_offset_log2=14,
+                scaling_factor=16,
+                noise_offset_log2=9,
                 cache_path=cache_path,
             ),
             noise_context_fn=lambda: tf_shell.create_autocontext64(
-                log2_cleartext_sz=24,
+                log2_cleartext_sz=25,
                 scaling_factor=1,
                 noise_offset_log2=0,
                 cache_path=cache_path,
@@ -157,6 +157,10 @@ def main(_):
             # jacobian_pfor=True,
             # jacobian_pfor_iterations=128,
             jacobian_devices=jacobian_dev,
+            #disable_encryption=True,
+            #disable_masking=True,
+            #disable_noise=True,
+            #check_overflow_INSECURE=True,
         )
 
         lr_schedule = keras.optimizers.schedules.ExponentialDecay(
