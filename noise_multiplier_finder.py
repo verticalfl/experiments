@@ -31,7 +31,7 @@ def main(_):
 
   for e in search_epsilons:
     noise_l = 1.0
-    noise_r = 15.0
+    noise_r = 100.0
     noise = (noise_l + noise_r) / 2
 
     while True:
