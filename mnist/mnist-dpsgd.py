@@ -65,19 +65,19 @@ def main(_):
         # Override the features and labels party devices.
         labels_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
         features_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
+        jacobian_dev = None
         if FLAGS.gpu:
-            jacobian_dev = f"/job:localhost/replica:0/task:0/device:GPU:0"
-        else:
-            jacobian_dev = features_party_dev
+            num_gpus = len(tf.config.list_physical_devices('GPU'))
+            jacobian_dev = [f"/job:localhost/replica:0/task:0/device:GPU:{i}" for i in range(num_gpus)]
 
     else:
         # Set up the distributed training environment.
         features_party_dev = f"/job:{features_party_job}/replica:0/task:0/device:CPU:0"
         labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
+        jacobian_dev = None
         if FLAGS.gpu:
-            jacobian_dev = f"/job:{features_party_job}/replica:0/task:0/device:GPU:0"
-        else:
-            jacobian_dev = features_party_dev
+            num_gpus = len(tf.config.list_physical_devices('GPU'))
+            jacobian_dev = [f"/job:{features_party_job}/replica:0/task:0/device:GPU:{i}" for i in range(num_gpus)]
 
         if FLAGS.party == "f":
             this_job = features_party_job
@@ -156,12 +156,18 @@ def main(_):
             cache_path=cache_path,
             # jacobian_pfor=True,
             # jacobian_pfor_iterations=128,
-            jacobian_device=jacobian_dev,
+            jacobian_devices=jacobian_dev,
+        )
+
+        lr_schedule = keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=FLAGS.learning_rate,
+            decay_steps=14,
+            decay_rate=0.9,
         )
 
         model.compile(
             loss=tf.keras.losses.CategoricalCrossentropy(),
-            optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate),
+            optimizer=tf.keras.optimizers.Adam(lr_schedule),
             metrics=[tf.keras.metrics.CategoricalAccuracy()],
         )
 
