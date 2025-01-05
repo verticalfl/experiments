@@ -133,16 +133,18 @@ def main(_):
                 keras.layers.Dense(64, activation=tf.nn.relu),
                 keras.layers.Dense(10, activation=tf.nn.softmax),
             ],
-            backprop_context_fn=lambda: tf_shell.create_autocontext64(
+            backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
                 log2_cleartext_sz=33,
                 scaling_factor=16,
                 noise_offset_log2=14,
+                read_from_cache=read_cache,
                 cache_path=cache_path,
             ),
-            noise_context_fn=lambda: tf_shell.create_autocontext64(
+            noise_context_fn=lambda read_cache: tf_shell.create_autocontext64(
                 log2_cleartext_sz=36,
                 scaling_factor=1,
                 noise_offset_log2=0,
+                read_from_cache=read_cache,
                 cache_path=cache_path,
             ),
             labels_party_dev=labels_party_dev,

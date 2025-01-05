@@ -165,16 +165,18 @@ def main(_):
                     activation=tf.nn.softmax,
                 ),
             ],
-            backprop_context_fn=lambda: tf_shell.create_autocontext64(
+            backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
                 log2_cleartext_sz=17,
                 scaling_factor=2,
                 noise_offset_log2=-9,
+                read_from_cache=read_cache,
                 cache_path=cache_path,
             ),
-            noise_context_fn=lambda: tf_shell.create_autocontext64(
+            noise_context_fn=lambda read_cache: tf_shell.create_autocontext64(
                 log2_cleartext_sz=36,
                 scaling_factor=1,
                 noise_offset_log2=35,
+                read_from_cache=read_cache,
                 cache_path=cache_path,
             ),
             labels_party_dev=labels_party_dev,
