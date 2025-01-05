@@ -206,7 +206,7 @@ def main(_):
         profile_batch=2,
     )
     # Write some metadata to the logs.
-    file_writer = tf.summary.create_file_writer(logdir + "/metrics")
+    file_writer = tf.summary.create_file_writer(logdir + "/metadata")
     file_writer.set_as_default()
     tf.summary.scalar("noise_multiplier", FLAGS.noise_multiplier, step=0)
     tf.summary.scalar("learning_rate", FLAGS.learning_rate, step=0)

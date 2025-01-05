@@ -11,6 +11,7 @@ import os
 import dp_accounting
 import signal
 import sys
+import network_mon_utils
 
 job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
@@ -185,7 +186,7 @@ def main(_):
         profile_batch=2,
     )
     # Write some metadata to the logs.
-    file_writer = tf.summary.create_file_writer(logdir + "/metrics")
+    file_writer = tf.summary.create_file_writer(logdir + "/metadata")
     file_writer.set_as_default()
     tf.summary.scalar("noise_multiplier", FLAGS.noise_multiplier, step=0)
     tf.summary.scalar("learning_rate", FLAGS.learning_rate, step=0)
@@ -197,6 +198,11 @@ def main(_):
         tf.summary.scalar(f"layer_{i}_units", layer.units, step=0)
         tf.summary.text(f"layer_{i}_activation", layer.activation.__name__ if layer.activation is not None else "None", step=0)
 
+    # Start network monitoring if the labels party is running on a different machine.
+    if FLAGS.party == "f":
+        label_party_ip = eval(FLAGS.cluster_spec)[labels_party_job][0].split(":")[0]
+        network_mon_utils.setup_traffic_monitoring(ip=label_party_ip)
+
     # Train the model.
     history = model.fit(
         features_dataset,
@@ -205,6 +211,13 @@ def main(_):
         validation_data=val_dataset,
         callbacks=[tb],
     )
+
+    # Stop network monitoring
+    if FLAGS.party == "f":
+        bytes_recv, bytes_sent = network_mon_utils.get_byte_count()
+        print(f"Network bytes recv, sent: {bytes_recv}, {bytes_sent}")
+        tf.summary.scalar("bytes_recv", bytes_recv, step=0)
+        tf.summary.scalar("bytes_sent", bytes_sent, step=0)
 
     print("Training complete.")
     batch_size = 2**12
