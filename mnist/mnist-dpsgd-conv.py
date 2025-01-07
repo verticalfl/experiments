@@ -219,8 +219,7 @@ def main(_):
     tf.summary.scalar("num_gpus", len(tf.config.list_physical_devices('GPU')), step=0)
     for i, layer in enumerate(model.layers):
         tf.summary.text(f"layer_{i}_type", layer.__class__.__name__, step=0)
-        tf.summary.scalar(f"layer_{i}_units", layer.units, step=0)
-        tf.summary.text(f"layer_{i}_activation", layer.activation.__name__ if layer.activation is not None else "None", step=0)
+        tf.summary.text(f"layer_{i}_config", str(layer.get_config()), step=0)
 
     # Start network monitoring if the labels party is running on a different machine.
     if FLAGS.party == "f":
