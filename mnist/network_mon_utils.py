@@ -32,23 +32,28 @@ def setup_traffic_monitoring(port=None, ip=None):
         for chain in [outbound_chain, inbound_chain]:
             subprocess.run(["sudo", "iptables", "-N", chain], check=True)
         
-        # Create base rule
-        base_rule = []
+        # Create base rule for inbound chain
+        inbound_rule = []
         if ip:
-            base_rule.extend(["-s", ip])
+            inbound_rule.extend(["-s", ip])
         if port:
-            base_rule.extend(["-p", "tcp", "--dport", str(port)])
+            inbound_rule.extend(["-p", "tcp", "--dport", str(port)])
+        
+        # Create base rule for outbound chain
+        outbound_rule = []
+        if ip:
+            outbound_rule.extend(["-d", ip])
+        if port:
+            outbound_rule.extend(["-p", "tcp", "--dport", str(port)])
             
         # Add rules to each chain
-        for chain in [outbound_chain, inbound_chain]:
-            rule = ["sudo", "iptables", "-A", chain] + base_rule
-            subprocess.run(rule, check=True)
+        subprocess.run(["sudo", "iptables", "-A", inbound_chain] + inbound_rule, check=True)
+        subprocess.run(["sudo", "iptables", "-A", outbound_chain] + outbound_rule, check=True)
         
         # Link to OUTPUT and INPUT chains
         subprocess.run(["sudo", "iptables", "-I", "OUTPUT", "1", "-j", outbound_chain], check=True)
         subprocess.run(["sudo", "iptables", "-I", "INPUT", "1", "-j", inbound_chain], check=True)
 
-        
         # Register cleanup function
         atexit.register(cleanup)
         
