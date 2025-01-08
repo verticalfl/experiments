@@ -130,7 +130,7 @@ def main(_):
         model = tf_shell_ml.DpSgdSequential(
             layers=[
                 tf_shell_ml.ShellDense(
-                    64,
+                    100,
                     activation=tf_shell_ml.relu,
                     activation_deriv=tf_shell_ml.relu_deriv,
                 ),

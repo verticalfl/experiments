@@ -130,7 +130,7 @@ def main(_):
         # layers or standard Keras layers.
         model = tf_shell_ml.PostScaleSequential(
             layers=[
-                keras.layers.Dense(64, activation=tf.nn.relu),
+                keras.layers.Dense(100, activation=tf.nn.relu),
                 keras.layers.Dense(10, activation=tf.nn.softmax),
             ],
             backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
