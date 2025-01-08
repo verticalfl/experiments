@@ -17,7 +17,7 @@ job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
 labels_party_job = f"{job_prefix}labels"
 
-flags.DEFINE_float("learning_rate", 0.05, "Learning rate for training")
+flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
@@ -144,7 +144,7 @@ def main(_):
                 #     strides=1,
                 # ),
                 tf_shell_ml.Conv2D(
-                    filters=32,
+                    filters=16,
                     kernel_size=4,
                     strides=2,
                     activation=tf_shell_ml.relu,
@@ -168,7 +168,7 @@ def main(_):
             backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
                 log2_cleartext_sz=17,
                 scaling_factor=2,
-                noise_offset_log2=-9,
+                noise_offset_log2=-4,
                 read_from_cache=read_cache,
                 cache_path=cache_path,
             ),
