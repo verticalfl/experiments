@@ -17,7 +17,7 @@ job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
 labels_party_job = f"{job_prefix}labels"
 
-flags.DEFINE_float("learning_rate", 0.05, "Learning rate for training")
+flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
@@ -110,12 +110,23 @@ def main(_):
     x_train, x_test = x_train / np.float32(255.0), x_test / np.float32(255.0)
     x_train, x_test = np.reshape(x_train, (-1, 784)), np.reshape(x_test, (-1, 784))
 
-    # Filter out all the training examples which do not have a label of 3, or 8.
-    x_train = x_train[np.where((y_train == 3) | (y_train == 8))[0]]
-    y_train = y_train[np.where((y_train == 3) | (y_train == 8))[0]]
-    # Convert the labels to 0 and 1, then to one-hot.
-    y_train = np.where(y_train == 3, 0, 1)
+    # Create masks for digits 3 and 8
+    train_mask = (y_train == 3) | (y_train == 8)
+    test_mask = (y_test == 3) | (y_test == 8)
+
+    # Filter the datasets
+    x_train = x_train[train_mask]
+    y_train = y_train[train_mask]
+    x_test = x_test[test_mask]
+    y_test = y_test[test_mask]
+
+    # Relabel 3 as 0 and 8 as 1 if you want binary classification
+    y_train = (y_train == 8).astype(np.int32)
+    y_test = (y_test == 8).astype(np.int32)
+
+    # Convert to one-hot encoding.
     y_train, y_test = tf.one_hot(y_train, 2), tf.one_hot(y_test, 2)
+
     num_examples = len(x_train)
 
     # Limit the number of features to reduce the memory footprint for testing.
@@ -138,7 +149,7 @@ def main(_):
         # layers or standard Keras layers.
         model = tf_shell_ml.PostScaleSequential(
             layers=[
-                keras.layers.Dense(500, activation=tf.nn.relu),
+                keras.layers.Dense(100, activation=tf.nn.relu),
                 keras.layers.Dense(2, activation=tf.nn.softmax),
             ],
             backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
@@ -159,8 +170,6 @@ def main(_):
             features_party_dev=features_party_dev,
             noise_multiplier=FLAGS.noise_multiplier,
             cache_path=cache_path,
-            # jacobian_pfor=True,
-            # jacobian_pfor_iterations=128,
             jacobian_devices=jacobian_dev,
             check_overflow_INSECURE=True,
         )
@@ -223,6 +232,7 @@ def main(_):
     print("Training complete.")
     batch_size = 2**12
     samples_per_epoch = num_examples - (num_examples % batch_size)
+    print("Samples per epoch:", samples_per_epoch)
 
     # Compute the privacy budget expended.
     eps = compute_epsilon(
