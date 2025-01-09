@@ -188,8 +188,6 @@ def main(_):
             jacobian_devices=jacobian_dev,
         )
 
-        model.build([None, 28, 28, 1])
-
         lr_schedule = keras.optimizers.schedules.ExponentialDecay(
             initial_learning_rate=FLAGS.learning_rate,
             decay_steps=10,

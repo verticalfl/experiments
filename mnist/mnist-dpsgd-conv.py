@@ -17,7 +17,7 @@ job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
 labels_party_job = f"{job_prefix}labels"
 
-flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
+flags.DEFINE_float("learning_rate", 0.005, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
@@ -165,19 +165,30 @@ def main(_):
                     activation=tf.nn.softmax,
                 ),
             ],
-            backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=17,
+            # backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
+            #     log2_cleartext_sz=17,
+            #     scaling_factor=2,
+            #     noise_offset_log2=-4,
+            #     read_from_cache=read_cache,
+            #     cache_path=cache_path,
+            # ),
+            # noise_context_fn=lambda read_cache: tf_shell.create_autocontext64(
+            #     log2_cleartext_sz=36,
+            #     scaling_factor=1,
+            #     noise_offset_log2=35,
+            #     read_from_cache=read_cache,
+            #     cache_path=cache_path,
+            # ),
+            backprop_context_fn=lambda read_cache: tf_shell.create_context64(
+                log_n=13,
+                main_moduli=[1152921468076179457, 70368952958977, 70441431023617],
+                plaintext_modulus=147457,
                 scaling_factor=2,
-                noise_offset_log2=-4,
-                read_from_cache=read_cache,
-                cache_path=cache_path,
             ),
-            noise_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=36,
-                scaling_factor=1,
-                noise_offset_log2=35,
-                read_from_cache=read_cache,
-                cache_path=cache_path,
+            noise_context_fn=lambda read_cache: tf_shell.create_context64(
+                log_n=13,
+                main_moduli=[305121420869091329, 168886395314995201],
+                plaintext_modulus=68720050177,
             ),
             labels_party_dev=labels_party_dev,
             features_party_dev=features_party_dev,
@@ -185,8 +196,6 @@ def main(_):
             cache_path=cache_path,
             jacobian_devices=jacobian_dev,
         )
-
-        model.build([None, 28, 28, 1])
 
         lr_schedule = keras.optimizers.schedules.ExponentialDecay(
             initial_learning_rate=FLAGS.learning_rate,

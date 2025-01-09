@@ -128,6 +128,7 @@ def main(_):
     y_train, y_test = tf.one_hot(y_train, 2), tf.one_hot(y_test, 2)
 
     num_examples = len(x_train)
+    print("Number of filtered samples:", num_examples)
 
     # Limit the number of features to reduce the memory footprint for testing.
     # x_train, x_test = x_train[:, :350], x_test[:, :350]
