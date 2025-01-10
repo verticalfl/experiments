@@ -17,6 +17,7 @@ job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
 labels_party_job = f"{job_prefix}labels"
 
+# flags.DEFINE_float("learning_rate", 0.00001, "Learning rate for training")
 flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
@@ -162,12 +163,12 @@ def main(_):
             backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
                 log2_cleartext_sz=23,
                 scaling_factor=16,
-                noise_offset_log2=9,
+                noise_offset_log2=16,
                 read_from_cache=read_cache,
                 cache_path=cache_path,
             ),
             noise_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=25,
+                log2_cleartext_sz=26,
                 scaling_factor=1,
                 noise_offset_log2=0,
                 read_from_cache=read_cache,
@@ -178,17 +179,15 @@ def main(_):
             noise_multiplier=FLAGS.noise_multiplier,
             cache_path=cache_path,
             jacobian_devices=jacobian_dev,
-        )
-
-        lr_schedule = keras.optimizers.schedules.ExponentialDecay(
-            initial_learning_rate=FLAGS.learning_rate,
-            decay_steps=10,
-            decay_rate=0.9,
+            check_overflow_INSECURE=True,
+            # disable_encryption=True,
+            # disable_masking=True,
+            # disable_noise=True,
         )
 
         model.compile(
             loss=tf.keras.losses.CategoricalCrossentropy(),
-            optimizer=tf.keras.optimizers.Adam(lr_schedule),
+            optimizer=tf.keras.optimizers.SGD(FLAGS.learning_rate),
             metrics=[tf.keras.metrics.CategoricalAccuracy()],
         )
 
