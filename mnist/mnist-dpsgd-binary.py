@@ -185,9 +185,15 @@ def main(_):
             # disable_noise=True,
         )
 
+        lr_schedule = keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=FLAGS.learning_rate,
+            decay_steps=10,
+            decay_rate=0.9,
+        )
+
         model.compile(
             loss=tf.keras.losses.CategoricalCrossentropy(),
-            optimizer=tf.keras.optimizers.SGD(FLAGS.learning_rate),
+            optimizer=tf.keras.optimizers.Adam(lr_schedule),
             metrics=[tf.keras.metrics.CategoricalAccuracy()],
         )
 
