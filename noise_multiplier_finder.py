@@ -4,21 +4,28 @@ import dp_accounting
 import math
 
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
-flags.DEFINE_integer("samples", 60000, "Number of samples")
+flags.DEFINE_integer("samples", 60000, "Number of available training samples.")
 flags.DEFINE_integer("log2_batch_size", 12, "Number of samples per batch")
+flags.DEFINE_float("target_delta", 1e-5, "Target delta")
 FLAGS = flags.FLAGS
 
-def compute_epsilon(steps, batch_size, num_samples, noise_multiplier, target_delta):
+def compute_epsilon(steps, batch_size, training_num_samples, noise_multiplier, target_delta):
+    """Computes epsilon value for given hyperparameters."""
+    if noise_multiplier == 0.0:
+        return float("inf")
     orders = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
     accountant = dp_accounting.rdp.RdpAccountant(orders)
-    sampling_probability = batch_size / num_samples
+
+    sampling_probability = batch_size / training_num_samples
     event = dp_accounting.SelfComposedDpEvent(
         dp_accounting.PoissonSampledDpEvent(
             sampling_probability, dp_accounting.GaussianDpEvent(noise_multiplier)
         ),
         steps,
     )
+
     accountant.compose(event)
+
     return accountant.get_epsilon(target_delta=target_delta)
 
 def main(_):
@@ -36,11 +43,11 @@ def main(_):
 
     while True:
       epsilon = compute_epsilon(
-          FLAGS.epochs * FLAGS.samples // batch_size,
+          steps=FLAGS.epochs * (FLAGS.samples // batch_size),  # always drops remainder
           batch_size=batch_size,
-          num_samples=samples_per_epoch,
+          training_num_samples=FLAGS.samples,
           noise_multiplier=noise,
-          target_delta=1e-5,
+          target_delta=FLAGS.target_delta,
       )
 
       # Stop if noise is found.

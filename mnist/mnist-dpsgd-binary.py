@@ -8,21 +8,22 @@ import numpy as np
 import tf_shell
 import tf_shell_ml
 import os
-import dp_accounting
 import signal
 import sys
-import network_mon_utils
+import experiment_utils
 
 job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
 labels_party_job = f"{job_prefix}labels"
 
-# flags.DEFINE_float("learning_rate", 0.00001, "Learning rate for training")
 flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
-    "party", "b", ["f", "l", "b"], "Which party is this, `f` `l`, or `b`, for feature, label, or both."
+    "party",
+    "b",
+    ["f", "l", "b"],
+    "Which party is this, `f` `l`, or `b`, for feature, label, or both.",
 )
 flags.DEFINE_bool("gpu", False, "Offload jacobain computation to GPU on features party")
 flags.DEFINE_string(
@@ -33,27 +34,12 @@ flags.DEFINE_string(
 }}""",
     "Cluster spec",
 )
+flags.DEFINE_integer("backprop_cleartext_sz", 23, "Cleartext size for backpropagation")
+flags.DEFINE_integer("backprop_scaling_factor", 4, "Scaling factor for backpropagation")
+flags.DEFINE_integer("backprop_noise_offset", 16, "Noise offset for backpropagation")
+flags.DEFINE_integer("noise_cleartext_sz", 26, "Cleartext size for noise")
+flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
 FLAGS = flags.FLAGS
-
-
-def compute_epsilon(steps, batch_size, num_samples, noise_multiplier, target_delta):
-    """Computes epsilon value for given hyperparameters."""
-    if FLAGS.noise_multiplier == 0.0:
-        return float("inf")
-    orders = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
-    accountant = dp_accounting.rdp.RdpAccountant(orders)
-
-    sampling_probability = batch_size / num_samples
-    event = dp_accounting.SelfComposedDpEvent(
-        dp_accounting.PoissonSampledDpEvent(
-            sampling_probability, dp_accounting.GaussianDpEvent(noise_multiplier)
-        ),
-        steps,
-    )
-
-    accountant.compose(event)
-
-    return accountant.get_epsilon(target_delta=target_delta)
 
 
 def main(_):
@@ -65,12 +51,15 @@ def main(_):
 
     if FLAGS.party == "b":
         # Override the features and labels party devices.
-        labels_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
-        features_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
+        labels_party_dev = "/job:localhost/replica:0/task:0/device:CPU:0"
+        features_party_dev = "/job:localhost/replica:0/task:0/device:CPU:0"
         jacobian_dev = None
         if FLAGS.gpu:
-            num_gpus = len(tf.config.list_physical_devices('GPU'))
-            jacobian_dev = [f"/job:localhost/replica:0/task:0/device:GPU:{i}" for i in range(num_gpus)]
+            num_gpus = len(tf.config.list_physical_devices("GPU"))
+            jacobian_dev = [
+                f"/job:localhost/replica:0/task:0/device:GPU:{i}"
+                for i in range(num_gpus)
+            ]
 
     else:
         # Set up the distributed training environment.
@@ -78,15 +67,17 @@ def main(_):
         labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
         jacobian_dev = None
         if FLAGS.gpu:
-            num_gpus = len(tf.config.list_physical_devices('GPU'))
-            jacobian_dev = [f"/job:{features_party_job}/replica:0/task:0/device:GPU:{i}" for i in range(num_gpus)]
+            num_gpus = len(tf.config.list_physical_devices("GPU"))
+            jacobian_dev = [
+                f"/job:{features_party_job}/replica:0/task:0/device:GPU:{i}"
+                for i in range(num_gpus)
+            ]
 
         if FLAGS.party == "f":
             this_job = features_party_job
         else:
             this_job = labels_party_job
 
-        # Set up the distributed training environment.
         print(FLAGS.cluster_spec)
 
         cluster = tf.train.ClusterSpec(eval(FLAGS.cluster_spec))
@@ -134,13 +125,25 @@ def main(_):
     # Limit the number of features to reduce the memory footprint for testing.
     # x_train, x_test = x_train[:, :350], x_test[:, :350]
 
+    # Shuffle both x_train and y_train together so the order is the same across
+    # parties. If x and y are shuffled separately, tf.Dataset does not suffle in
+    # the same order even when the seed is the same.
+    shuffle_seed = int(time.time())
     with tf.device(labels_party_dev):
-        labels_dataset = tf.data.Dataset.from_tensor_slices(y_train)
-        labels_dataset = labels_dataset.batch(2**10)
+        labels_dataset = (
+            tf.data.Dataset.from_tensor_slices((x_train, y_train))
+            .shuffle(2**14, seed=shuffle_seed)
+            .map(lambda x, y: y)
+        )
+        labels_dataset = labels_dataset.batch(2**12)
 
     with tf.device(features_party_dev):
-        features_dataset = tf.data.Dataset.from_tensor_slices(x_train)
-        features_dataset = features_dataset.batch(2**10)
+        features_dataset = (
+            tf.data.Dataset.from_tensor_slices((x_train, y_train))
+            .shuffle(2**14, seed=shuffle_seed)
+            .map(lambda x, y: x)
+        )
+        features_dataset = features_dataset.batch(2**12)
 
         val_dataset = tf.data.Dataset.from_tensor_slices((x_test, y_test))
         val_dataset = val_dataset.batch(32)
@@ -161,16 +164,16 @@ def main(_):
                 ),
             ],
             backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=23,
-                scaling_factor=16,
-                noise_offset_log2=16,
+                log2_cleartext_sz=flags.FLAGS.backprop_cleartext_sz,
+                scaling_factor=flags.FLAGS.backprop_scaling_factor,
+                noise_offset_log2=flags.FLAGS.backprop_noise_offset,
                 read_from_cache=read_cache,
                 cache_path=cache_path,
             ),
             noise_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=26,
+                log2_cleartext_sz=flags.FLAGS.noise_cleartext_sz,
                 scaling_factor=1,
-                noise_offset_log2=0,
+                noise_offset_log2=flags.FLAGS.noise_noise_offset,
                 read_from_cache=read_cache,
                 cache_path=cache_path,
             ),
@@ -179,49 +182,47 @@ def main(_):
             noise_multiplier=FLAGS.noise_multiplier,
             cache_path=cache_path,
             jacobian_devices=jacobian_dev,
-            check_overflow_INSECURE=True,
+            # check_overflow_INSECURE=True,
             # disable_encryption=True,
             # disable_masking=True,
             # disable_noise=True,
         )
 
-        lr_schedule = keras.optimizers.schedules.ExponentialDecay(
-            initial_learning_rate=FLAGS.learning_rate,
-            decay_steps=10,
-            decay_rate=0.9,
-        )
+        model.build(input_shape=(None, 784))
+        model.summary()
 
         model.compile(
             loss=tf.keras.losses.CategoricalCrossentropy(),
-            optimizer=tf.keras.optimizers.Adam(lr_schedule),
+            optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate, beta_1=0.8),
             metrics=[tf.keras.metrics.CategoricalAccuracy()],
         )
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     logdir = os.path.abspath("") + f"/tflogs/dpsgd-binary-{stamp}"
-    tb = tf.keras.callbacks.TensorBoard(
-        logdir,
+    tb = experiment_utils.ExperimentTensorBoard(
+        log_dir=logdir,
+        # ExperimentTensorBoard kwargs.
+        noise_multiplier=FLAGS.noise_multiplier,
+        learning_rate=FLAGS.learning_rate,
+        party=FLAGS.party,
+        gpu_enabled=FLAGS.gpu,
+        num_gpus=len(tf.config.list_physical_devices("GPU")),
+        layers=model.layers,
+        cluster_spec=FLAGS.cluster_spec,
+        target_delta=1e-4,
+        training_num_samples=num_examples,
+        epochs=FLAGS.epochs,
+        backprop_cleartext_sz=FLAGS.backprop_cleartext_sz,
+        backprop_scaling_factor=FLAGS.backprop_scaling_factor,
+        backprop_noise_offset=FLAGS.backprop_noise_offset,
+        noise_cleartext_sz=FLAGS.noise_cleartext_sz,
+        noise_noise_offset=FLAGS.noise_noise_offset,
+        # TensorBoard kwargs.
         write_steps_per_second=True,
         update_freq="batch",
         profile_batch=2,
     )
-    # Write some metadata to the logs.
-    file_writer = tf.summary.create_file_writer(logdir + "/metadata")
-    file_writer.set_as_default()
-    tf.summary.scalar("noise_multiplier", FLAGS.noise_multiplier, step=0)
-    tf.summary.scalar("learning_rate", FLAGS.learning_rate, step=0)
-    tf.summary.text("party", FLAGS.party, step=0)
-    tf.summary.scalar("gpu_enabled", FLAGS.gpu, step=0)
-    tf.summary.scalar("num_gpus", len(tf.config.list_physical_devices('GPU')), step=0)
-    for i, layer in enumerate(model.layers):
-        tf.summary.text(f"layer_{i}_type", layer.__class__.__name__, step=0)
-        tf.summary.text(f"layer_{i}_config", str(layer.get_config()), step=0)
-
-    # Start network monitoring if the labels party is running on a different machine.
-    if FLAGS.party == "f":
-        label_party_ip = eval(FLAGS.cluster_spec)[labels_party_job][0].split(":")[0]
-        network_mon_utils.setup_traffic_monitoring(ip=label_party_ip)
 
     # Train the model.
     history = model.fit(
@@ -231,29 +232,6 @@ def main(_):
         validation_data=val_dataset,
         callbacks=[tb],
     )
-
-    # Stop network monitoring
-    if FLAGS.party == "f":
-        bytes_recv, bytes_sent = network_mon_utils.get_byte_count()
-        print(f"Network bytes recv, sent: {bytes_recv}, {bytes_sent}")
-        tf.summary.scalar("bytes_recv", bytes_recv, step=0)
-        tf.summary.scalar("bytes_sent", bytes_sent, step=0)
-
-    print("Training complete.")
-    batch_size = 2**12
-    samples_per_epoch = num_examples - (num_examples % batch_size)
-    print("Samples per epoch:", samples_per_epoch)
-
-    # Compute the privacy budget expended.
-    eps = compute_epsilon(
-        steps=FLAGS.epochs * num_examples // batch_size,
-        batch_size=batch_size,
-        num_samples=samples_per_epoch,
-        noise_multiplier=FLAGS.noise_multiplier,
-        target_delta=1e-5,
-    )
-    print(f"Privacy budget expended: {eps}")
-    tf.summary.scalar("dp_epsilon", eps, step=0)
 
 
 if __name__ == "__main__":
