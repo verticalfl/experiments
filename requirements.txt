@@ -1,4 +1,4 @@
-tf-shell==0.1.24
+tf-shell==0.1.27
 dp-accounting==0.4.4
 tensorboard-plugin-profile
 # extra tensorboard-plugin-profile deps

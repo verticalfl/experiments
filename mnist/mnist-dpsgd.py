@@ -33,7 +33,7 @@ flags.DEFINE_string(
 )
 flags.DEFINE_integer("backprop_cleartext_sz", 23, "Cleartext size for backpropagation")
 flags.DEFINE_integer("backprop_scaling_factor", 4, "Scaling factor for backpropagation")
-flags.DEFINE_integer("backprop_noise_offset", 9, "Noise offset for backpropagation")
+flags.DEFINE_integer("backprop_noise_offset", 14, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 25, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
 FLAGS = flags.FLAGS

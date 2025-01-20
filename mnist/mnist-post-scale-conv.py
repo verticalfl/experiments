@@ -192,8 +192,8 @@ def main(_):
             jacobian_devices=jacobian_dev,
         )
 
-        m.build([None, 28 - (2 * clip_by), 28 - (2 * clip_by), 1])
-        m.summary()
+        model.build([None, 28 - (2 * clip_by), 28 - (2 * clip_by), 1])
+        model.summary()
 
         model.compile(
             loss=tf.keras.losses.CategoricalCrossentropy(),
