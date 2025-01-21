@@ -31,11 +31,11 @@ flags.DEFINE_string(
 }}""",
     "Cluster spec",
 )
-flags.DEFINE_integer("backprop_cleartext_sz", 17, "Cleartext size for backpropagation")
+flags.DEFINE_integer("backprop_cleartext_sz", 23, "Cleartext size for backpropagation")
 flags.DEFINE_integer("backprop_scaling_factor", 2, "Scaling factor for backpropagation")
-flags.DEFINE_integer("backprop_noise_offset", -4, "Noise offset for backpropagation")
-flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
-flags.DEFINE_integer("noise_noise_offset", 35, "Noise offset for noise")
+flags.DEFINE_integer("backprop_noise_offset", 48, "Noise offset for backpropagation")
+flags.DEFINE_integer("noise_cleartext_sz", 38, "Cleartext size for noise")
+flags.DEFINE_integer("noise_noise_offset", 31, "Noise offset for noise")
 FLAGS = flags.FLAGS
 
 
