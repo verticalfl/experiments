@@ -13,6 +13,7 @@ import os
 import dp_accounting
 import signal
 import sys
+import experiment_utils
 
 job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
@@ -36,27 +37,12 @@ flags.DEFINE_string(
 }}""",
     "Cluster spec",
 )
+flags.DEFINE_integer("backprop_cleartext_sz", 33, "Cleartext size for backpropagation")
+flags.DEFINE_integer("backprop_scaling_factor", 16, "Scaling factor for backpropagation")
+flags.DEFINE_integer("backprop_noise_offset", 14, "Noise offset for backpropagation")
+flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
+flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
 FLAGS = flags.FLAGS
-
-
-def compute_epsilon(steps, batch_size, num_samples, noise_multiplier, target_delta):
-    """Computes epsilon value for given hyperparameters."""
-    if FLAGS.noise_multiplier == 0.0:
-        return float("inf")
-    orders = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
-    accountant = dp_accounting.rdp.RdpAccountant(orders)
-
-    sampling_probability = batch_size / num_samples
-    event = dp_accounting.SelfComposedDpEvent(
-        dp_accounting.PoissonSampledDpEvent(
-            sampling_probability, dp_accounting.GaussianDpEvent(noise_multiplier)
-        ),
-        steps,
-    )
-
-    accountant.compose(event)
-
-    return accountant.get_epsilon(target_delta=target_delta)
 
 
 def main(_):
@@ -108,7 +94,7 @@ def main(_):
             server.join()  # Wait for the features party to finish.
             exit(0)
 
-    cache_path = "./cache-imdb-dpsgd/"
+    cache_path = "./cache-imdb-post-scale/"
 
     # Set up training data. Split the training set into 60% and 40% to end up
     # with 15,000 examples for training, 10,000 examples for validation and
@@ -118,6 +104,10 @@ def main(_):
         split=("train[:60%]", "train[60%:]", "test"),
         as_supervised=True,
     )
+
+    num_examples = train_data.cardinality().numpy()
+    print(f"Number of examples: {num_examples}")
+
     with tf.device(labels_party_dev):
         # One-hot encode the labels for training data on the features party.
         labels_dataset = train_data.map(lambda x,y: tf.one_hot(tf.cast(y, tf.int32), 2)).batch(2**12)
@@ -152,33 +142,29 @@ def main(_):
         # Create the model.
         model = tf_shell_ml.PostScaleSequential(
             layers=[
-                # Note we use Shell's embedding layer here because it allows us
-                # to skip the most popular words, to match behavior of the DP-SGD
-                # model.
-                tf_shell_ml.ShellEmbedding(
+                tf.keras.layers.Embedding(
                     vocab_size + 1,  # +1 for OOV token.
                     embedding_dim,
-                    skip_embeddings_below_index=200,  # Skip the most common words.
                 ),
-                #tf_shell_ml.ShellDropout(0.5),
-                tf_shell_ml.GlobalAveragePooling1D(),
-                tf_shell_ml.ShellDropout(0.5),
-                tf_shell_ml.ShellDense(
+                # tf.keras.layers.Dropout(0.5),
+                tf.keras.layers.GlobalAveragePooling1D(),
+                tf.keras.layers.Dropout(0.5),
+                tf.keras.layers.Dense(
                     2,
                     activation=tf.nn.softmax,
                 ),
             ],
             backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=33,
-                scaling_factor=16,
-                noise_offset_log2=14,
+                log2_cleartext_sz=flags.FLAGS.backprop_cleartext_sz,
+                scaling_factor=flags.FLAGS.backprop_scaling_factor,
+                noise_offset_log2=flags.FLAGS.backprop_noise_offset,
                 read_from_cache=read_cache,
                 cache_path=cache_path,
             ),
             noise_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=36,
+                log2_cleartext_sz=flags.FLAGS.noise_cleartext_sz,
                 scaling_factor=1,
-                noise_offset_log2=0,
+                noise_offset_log2=flags.FLAGS.noise_noise_offset,
                 read_from_cache=read_cache,
                 cache_path=cache_path,
             ),
@@ -189,38 +175,39 @@ def main(_):
             jacobian_devices=jacobian_dev,
         )
 
-        lr_schedule = keras.optimizers.schedules.ExponentialDecay(
-            initial_learning_rate=FLAGS.learning_rate,
-            decay_steps=10,
-            decay_rate=0.9,
-        )
-
         model.compile(
             loss=tf.keras.losses.CategoricalCrossentropy(),
-            optimizer=tf.keras.optimizers.Adam(lr_schedule),
+            optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate, beta_1=0.8),
             metrics=[tf.keras.metrics.CategoricalAccuracy()],
         )
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    logdir = os.path.abspath("") + f"/tflogs/imdb-dpsgd-{stamp}"
-    tb = tf.keras.callbacks.TensorBoard(
-        logdir,
+    logdir = os.path.abspath("") + f"/tflogs/imdb-post-scale-{stamp}"
+
+    tb = experiment_utils.ExperimentTensorBoard(
+        log_dir=logdir,
+        # ExperimentTensorBoard kwargs.
+        noise_multiplier=FLAGS.noise_multiplier,
+        learning_rate=FLAGS.learning_rate,
+        party=FLAGS.party,
+        gpu_enabled=FLAGS.gpu,
+        num_gpus=len(tf.config.list_physical_devices('GPU')),
+        layers=model.layers,
+        cluster_spec=FLAGS.cluster_spec,
+        target_delta=1e-5,
+        training_num_samples=num_examples,
+        epochs=FLAGS.epochs,
+        backprop_cleartext_sz=FLAGS.backprop_cleartext_sz,
+        backprop_scaling_factor=FLAGS.backprop_scaling_factor,
+        backprop_noise_offset=FLAGS.backprop_noise_offset,
+        noise_cleartext_sz=FLAGS.noise_cleartext_sz,
+        noise_noise_offset=FLAGS.noise_noise_offset,
+        # TensorBoard kwargs.
         write_steps_per_second=True,
         update_freq="batch",
         profile_batch=2,
     )
-    # Write some metadata to the logs.
-    file_writer = tf.summary.create_file_writer(logdir + "/metadata")
-    file_writer.set_as_default()
-    tf.summary.scalar("noise_multiplier", FLAGS.noise_multiplier, step=0)
-    tf.summary.scalar("learning_rate", FLAGS.learning_rate, step=0)
-    tf.summary.text("party", FLAGS.party, step=0)
-    tf.summary.scalar("gpu_enabled", FLAGS.gpu, step=0)
-    tf.summary.scalar("num_gpus", len(tf.config.list_physical_devices('GPU')), step=0)
-    for i, layer in enumerate(model.layers):
-        tf.summary.text(f"layer_{i}_type", layer.__class__.__name__, step=0)
-        tf.summary.text(f"layer_{i}_config", str(layer.get_config()), step=0)
 
     # Train the model.
     history = model.fit(
@@ -230,21 +217,6 @@ def main(_):
         validation_data=val_data,
         callbacks=[tb],
     )
-
-    print("Training complete.")
-    batch_size = 2**12
-    samples_per_epoch = 15000 - (15000 % batch_size)
-
-    # Compute the privacy budget expended.
-    eps = compute_epsilon(
-        steps=FLAGS.epochs * 15000 // batch_size,
-        batch_size=batch_size,
-        num_samples=samples_per_epoch,
-        noise_multiplier=FLAGS.noise_multiplier,
-        target_delta=1e-4,
-    )
-    print(f"Privacy budget expended: {eps}")
-    tf.summary.scalar("dp_epsilon", eps, step=0)
 
 
 if __name__ == "__main__":

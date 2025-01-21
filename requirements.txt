@@ -4,3 +4,6 @@ tensorboard-plugin-profile
 # extra tensorboard-plugin-profile deps
 etils
 importlib-resources
+# IMDB dataset
+tensorflow_hub
+tensorflow_datasets
