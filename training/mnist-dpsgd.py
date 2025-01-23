@@ -10,11 +10,7 @@ import tf_shell_ml
 import os
 import signal
 import sys
-import experiment_utils
-
-job_prefix = "tfshell"
-features_party_job = f"{job_prefix}features"
-labels_party_job = f"{job_prefix}labels"
+from experiment_utils import features_party_job, labels_party_job, ExperimentTensorBoard
 
 flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
@@ -175,7 +171,7 @@ def main(_):
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     logdir = os.path.abspath("") + f"/tflogs/dpsgd-{stamp}"
-    tb = experiment_utils.ExperimentTensorBoard(
+    tb = ExperimentTensorBoard(
         log_dir=logdir,
         # ExperimentTensorBoard kwargs.
         noise_multiplier=FLAGS.noise_multiplier,

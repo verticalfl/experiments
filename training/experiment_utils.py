@@ -4,6 +4,9 @@ import sys
 import dp_accounting
 import tensorflow as tf
 
+job_prefix = "tfshell"
+features_party_job = f"{job_prefix}features"
+labels_party_job = f"{job_prefix}labels"
 
 def compute_epsilon(steps, batch_size, training_num_samples, noise_multiplier, target_delta):
     """Computes epsilon value for given hyperparameters."""
