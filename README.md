@@ -2,20 +2,8 @@
 
 ## Setup
 
-Use python 3.10 or 3.11 (3.12 is not supported yet because of a TensorFlow
-distutils dependency issue).
-
-Create a python environment:
-```bash
-sudo apt install python3-venv
-python -m venv .venv
-source .venv/bin/activate
-```
-
-Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+This project uses devcontainers for easy setup and to ensure a consistent
+development environment.
 
 ## Running
 
