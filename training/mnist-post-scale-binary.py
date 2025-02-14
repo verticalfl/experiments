@@ -32,6 +32,7 @@ flags.DEFINE_integer("backprop_scaling_factor", 32, "Scaling factor for backprop
 flags.DEFINE_integer("backprop_noise_offset", 14, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 35, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
+flags.DEFINE_bool("eager_mode", False, "Eager mode")
 FLAGS = flags.FLAGS
 
 
@@ -110,7 +111,9 @@ def main(_):
     # x_train, x_test = x_train[:, :300], x_test[:, :300]
 
     num_examples = len(x_train)
-    print("Number of filtered samples:", num_examples)
+    print("Number of training examples:", num_examples)
+
+    tf.config.run_functions_eagerly(FLAGS.eager_mode)
 
     # Shuffle both x_train and y_train together so the order is the same across
     # parties. If x and y are shuffled separately, tf.Dataset does not suffle in
@@ -137,26 +140,53 @@ def main(_):
 
         cache_path = "./cache-mnist-postscale-binary/"
 
+        # Define functions which generate encryption context for the
+        # backpropagation and noise parts of the protocol. When not executing
+        # eagerly, autocontext can be used to automatically determine the
+        # encryption parameters. When executing eagerly, parameters must be
+        # specified manually (or simply copied from a previous run which uses
+        # autocontext).
+        def backprop_context_fn(read_cache):
+            if FLAGS.eager_mode:
+                return tf_shell.create_context64(
+                    log_n=12,
+                    main_moduli=[1688880462102529, 2181470596882433],
+                    plaintext_modulus=8590090241,
+                    scaling_factor=flags.FLAGS.backprop_scaling_factor,
+                )
+            else:
+                return tf_shell.create_autocontext64(
+                    log2_cleartext_sz=flags.FLAGS.backprop_cleartext_sz,
+                    scaling_factor=flags.FLAGS.backprop_scaling_factor,
+                    noise_offset_log2=flags.FLAGS.backprop_noise_offset,
+                    read_from_cache=read_cache,
+                    cache_path=cache_path,
+                )
+
+        def noise_context_fn (read_cache):
+            if FLAGS.eager_mode:
+                return tf_shell.create_context64(
+                    log_n=12,
+                    main_moduli=[2251800887492609, 9007203549970433],
+                    plaintext_modulus=34359754753,
+                )
+            else:
+                return tf_shell.create_autocontext64(
+                    log2_cleartext_sz=flags.FLAGS.noise_cleartext_sz,
+                    scaling_factor=1,
+                    noise_offset_log2=flags.FLAGS.noise_noise_offset,
+                    read_from_cache=read_cache,
+                    cache_path=cache_path,
+                )
+
         # Create the model. When using post scale, use standard Keras layers.
         model = tf_shell_ml.PostScaleSequential(
             layers=[
                 keras.layers.Dense(100, activation=tf.nn.relu, use_bias=False),
                 keras.layers.Dense(2, activation=tf.nn.softmax, use_bias=False),
             ],
-            backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=flags.FLAGS.backprop_cleartext_sz,
-                scaling_factor=flags.FLAGS.backprop_scaling_factor,
-                noise_offset_log2=flags.FLAGS.backprop_noise_offset,
-                read_from_cache=read_cache,
-                cache_path=cache_path,
-            ),
-            noise_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=flags.FLAGS.noise_cleartext_sz,
-                scaling_factor=1,
-                noise_offset_log2=flags.FLAGS.noise_noise_offset,
-                read_from_cache=read_cache,
-                cache_path=cache_path,
-            ),
+            backprop_context_fn=backprop_context_fn,
+            noise_context_fn=noise_context_fn,
             labels_party_dev=labels_party_dev,
             features_party_dev=features_party_dev,
             noise_multiplier=FLAGS.noise_multiplier,

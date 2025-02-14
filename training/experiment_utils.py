@@ -89,6 +89,7 @@ class ExperimentTensorBoard(tf.keras.callbacks.TensorBoard):
             tf.summary.scalar("backprop_noise_offset", self.backprop_noise_offset, step=0)
             tf.summary.scalar("noise_cleartext_sz", self.noise_cleartext_sz, step=0)
             tf.summary.scalar("noise_noise_offset", self.noise_noise_offset, step=0)
+            tf.summary.scalar("eager_mode", tf.config.functions_run_eagerly(), step=0)
 
         # Start network monitoring if the labels party is running on a different
         # machine.

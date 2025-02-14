@@ -35,6 +35,7 @@ flags.DEFINE_integer("backprop_scaling_factor", 4, "Scaling factor for backpropa
 flags.DEFINE_integer("backprop_noise_offset", 16, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 26, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
+flags.DEFINE_bool("eager_mode", False, "Eager mode")
 FLAGS = flags.FLAGS
 
 
@@ -116,10 +117,12 @@ def main(_):
     y_train, y_test = tf.one_hot(y_train, 2), tf.one_hot(y_test, 2)
 
     num_examples = len(x_train)
-    print("Number of filtered samples:", num_examples)
+    print("Number of training examples:", num_examples)
 
     # Limit the number of features to reduce the memory footprint for testing.
     # x_train, x_test = x_train[:, :350], x_test[:, :350]
+
+    tf.config.run_functions_eagerly(FLAGS.eager_mode)
 
     # Shuffle both x_train and y_train together so the order is the same across
     # parties. If x and y are shuffled separately, tf.Dataset does not suffle in
@@ -146,6 +149,47 @@ def main(_):
 
         cache_path = "./cache-mnist-dpsgd-binary/"
 
+
+        # Define functions which generate encryption context for the
+        # backpropagation and noise parts of the protocol. When not executing
+        # eagerly, autocontext can be used to automatically determine the
+        # encryption parameters. When executing eagerly, parameters must be
+        # specified manually (or simply copied from a previous run which uses
+        # autocontext).
+        def backprop_context_fn(read_cache):
+            if FLAGS.eager_mode:
+                return tf_shell.create_context64(
+                    log_n=12,
+                    main_moduli=[36030591770263553, 18014745055510529],
+                    plaintext_modulus=8404993,
+                    scaling_factor=flags.FLAGS.backprop_scaling_factor,
+                )
+            else:
+                return tf_shell.create_autocontext64(
+                    log2_cleartext_sz=flags.FLAGS.backprop_cleartext_sz,
+                    scaling_factor=flags.FLAGS.backprop_scaling_factor,
+                    noise_offset_log2=flags.FLAGS.backprop_noise_offset,
+                    read_from_cache=read_cache,
+                    cache_path=cache_path,
+                )
+
+        def noise_context_fn(read_cache):
+            if FLAGS.eager_mode:
+                return tf_shell.create_context64(
+                    log_n=12,
+                    main_moduli=[11016591278081, 20931523428353],
+                    plaintext_modulus=67239937,
+                    scaling_factor=1,
+                )
+            else:
+                return tf_shell.create_autocontext64(
+                    log2_cleartext_sz=flags.FLAGS.noise_cleartext_sz,
+                    scaling_factor=1,
+                    noise_offset_log2=flags.FLAGS.noise_noise_offset,
+                    read_from_cache=read_cache,
+                    cache_path=cache_path,
+                )
+
         # Create the model. When using DPSGD, you must use Shell* layers.
         model = tf_shell_ml.DpSgdSequential(
             layers=[
@@ -159,20 +203,8 @@ def main(_):
                     activation=tf.nn.softmax,
                 ),
             ],
-            backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=flags.FLAGS.backprop_cleartext_sz,
-                scaling_factor=flags.FLAGS.backprop_scaling_factor,
-                noise_offset_log2=flags.FLAGS.backprop_noise_offset,
-                read_from_cache=read_cache,
-                cache_path=cache_path,
-            ),
-            noise_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=flags.FLAGS.noise_cleartext_sz,
-                scaling_factor=1,
-                noise_offset_log2=flags.FLAGS.noise_noise_offset,
-                read_from_cache=read_cache,
-                cache_path=cache_path,
-            ),
+            backprop_context_fn=backprop_context_fn,
+            noise_context_fn=noise_context_fn,
             labels_party_dev=labels_party_dev,
             features_party_dev=features_party_dev,
             noise_multiplier=FLAGS.noise_multiplier,

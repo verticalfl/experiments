@@ -15,7 +15,7 @@ import signal
 import sys
 from experiment_utils import features_party_job, labels_party_job, ExperimentTensorBoard
 
-flags.DEFINE_float("learning_rate", 0.05, "Learning rate for training")
+flags.DEFINE_float("learning_rate", 0.1, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
@@ -34,10 +34,11 @@ flags.DEFINE_string(
     "Cluster spec",
 )
 flags.DEFINE_integer("backprop_cleartext_sz", 21, "Cleartext size for backpropagation")
-flags.DEFINE_integer("backprop_scaling_factor", 16, "Scaling factor for backpropagation")
+flags.DEFINE_integer("backprop_scaling_factor", 2, "Scaling factor for backpropagation")
 flags.DEFINE_integer("backprop_noise_offset", 40, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
+flags.DEFINE_bool("eager_mode", False, "Eager mode")
 FLAGS = flags.FLAGS
 
 
@@ -90,8 +91,6 @@ def main(_):
             server.join()  # Wait for the features party to finish.
             exit(0)
 
-    cache_path = "./cache-imdb-dpsgd/"
-
     # Set up training data. Split the training set into 60% and 40% to end up
     # with 15,000 examples for training, 10,000 examples for validation and
     # 25,000 examples for testing.
@@ -101,8 +100,10 @@ def main(_):
         as_supervised=True,
     )
 
-    num_examples = train_data.cardinality().numpy()
-    print(f"Number of examples: {num_examples}")
+    num_examples = int(train_data.cardinality().numpy())
+    print("Number of training examples:", num_examples)
+
+    tf.config.run_functions_eagerly(FLAGS.eager_mode)
 
     with tf.device(labels_party_dev):
         # One-hot encode the labels for training data on the features party.
@@ -135,6 +136,47 @@ def main(_):
         val_data = val_data.map(preprocess_all)
         test_data = test_data.map(preprocess_all)
 
+        cache_path = "./cache-imdb-dpsgd/"
+
+        # Define functions which generate encryption context for the
+        # backpropagation and noise parts of the protocol. When not executing
+        # eagerly, autocontext can be used to automatically determine the
+        # encryption parameters. When executing eagerly, parameters must be
+        # specified manually (or simply copied from a previous run which uses
+        # autocontext).
+        def backprop_context_fn(read_cache):
+            if FLAGS.eager_mode:
+                return tf_shell.create_context64(
+                    log_n=12,
+                    main_moduli=[36028865943724033, 18014826867515393],
+                    plaintext_modulus=2236417,
+                    scaling_factor=flags.FLAGS.backprop_scaling_factor,
+                )
+            else:
+                return tf_shell.create_autocontext64(
+                    log2_cleartext_sz=flags.FLAGS.backprop_cleartext_sz,
+                    scaling_factor=flags.FLAGS.backprop_scaling_factor,
+                    noise_offset_log2=flags.FLAGS.backprop_noise_offset,
+                    read_from_cache=read_cache,
+                    cache_path=cache_path,
+                )
+
+        def noise_context_fn (read_cache):
+            if FLAGS.eager_mode:
+                return tf_shell.create_context64(
+                    log_n=12,
+                    main_moduli=[6192450225922049, 16325550595612673],
+                    plaintext_modulus=68719484929,
+                )
+            else:
+                return tf_shell.create_autocontext64(
+                    log2_cleartext_sz=flags.FLAGS.noise_cleartext_sz,
+                    scaling_factor=1,
+                    noise_offset_log2=flags.FLAGS.noise_noise_offset,
+                    read_from_cache=read_cache,
+                    cache_path=cache_path,
+                )
+
         # Create the model.
         model = tf_shell_ml.DpSgdSequential(
             layers=[
@@ -151,25 +193,17 @@ def main(_):
                     activation=tf.nn.softmax,
                 ),
             ],
-            backprop_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=flags.FLAGS.backprop_cleartext_sz,
-                scaling_factor=flags.FLAGS.backprop_scaling_factor,
-                noise_offset_log2=flags.FLAGS.backprop_noise_offset,
-                read_from_cache=read_cache,
-                cache_path=cache_path,
-            ),
-            noise_context_fn=lambda read_cache: tf_shell.create_autocontext64(
-                log2_cleartext_sz=flags.FLAGS.noise_cleartext_sz,
-                scaling_factor=1,
-                noise_offset_log2=flags.FLAGS.noise_noise_offset,
-                read_from_cache=read_cache,
-                cache_path=cache_path,
-            ),
+            backprop_context_fn=backprop_context_fn,
+            noise_context_fn=noise_context_fn,
             labels_party_dev=labels_party_dev,
             features_party_dev=features_party_dev,
             noise_multiplier=FLAGS.noise_multiplier,
             cache_path=cache_path,
             jacobian_devices=jacobian_dev,
+            # check_overflow_INSECURE=True,
+            # disable_encryption=True,
+            # disable_masking=True,
+            # disable_noise=True,
         )
 
         model.compile(
