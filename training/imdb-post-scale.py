@@ -15,7 +15,7 @@ import signal
 import sys
 from experiment_utils import features_party_job, labels_party_job, ExperimentTensorBoard
 
-flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
+flags.DEFINE_float("learning_rate", 0.1, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
@@ -100,7 +100,7 @@ def main(_):
         as_supervised=True,
     )
 
-    num_examples = train_data.cardinality().numpy()
+    num_examples = int(train_data.cardinality().numpy())
     print("Number of training examples:", num_examples)
 
     tf.config.run_functions_eagerly(FLAGS.eager_mode)
