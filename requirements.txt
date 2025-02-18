@@ -1,5 +1,6 @@
 tf-shell==0.1.29
 dp-accounting==0.4.4
+nltk==3.9.1
 tensorboard-plugin-profile
 # extra tensorboard-plugin-profile deps
 etils

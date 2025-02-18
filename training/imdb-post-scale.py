@@ -1,21 +1,20 @@
-import time
+import string
+import os
+import signal
+import sys
 from datetime import datetime
 from absl import app
 from absl import flags
 import tensorflow as tf
-import tensorflow_hub as hub
 import tensorflow_datasets as tfds
-import keras
-import numpy as np
 import tf_shell
 import tf_shell_ml
-import os
-import dp_accounting
-import signal
-import sys
+import nltk
 from experiment_utils import features_party_job, labels_party_job, ExperimentTensorBoard
 
-flags.DEFINE_float("learning_rate", 0.1, "Learning rate for training")
+nltk.download("stopwords")
+
+flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
@@ -34,7 +33,9 @@ flags.DEFINE_string(
     "Cluster spec",
 )
 flags.DEFINE_integer("backprop_cleartext_sz", 33, "Cleartext size for backpropagation")
-flags.DEFINE_integer("backprop_scaling_factor", 16, "Scaling factor for backpropagation")
+flags.DEFINE_integer(
+    "backprop_scaling_factor", 16, "Scaling factor for backpropagation"
+)
 flags.DEFINE_integer("backprop_noise_offset", 14, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
@@ -55,8 +56,11 @@ def main(_):
         features_party_dev = "/job:localhost/replica:0/task:0/device:CPU:0"
         jacobian_dev = None
         if FLAGS.gpu:
-            num_gpus = len(tf.config.list_physical_devices('GPU'))
-            jacobian_dev = [f"/job:localhost/replica:0/task:0/device:GPU:{i}" for i in range(num_gpus)]
+            num_gpus = len(tf.config.list_physical_devices("GPU"))
+            jacobian_dev = [
+                f"/job:localhost/replica:0/task:0/device:GPU:{i}"
+                for i in range(num_gpus)
+            ]
 
     else:
         # Set up the distributed training environment.
@@ -64,8 +68,11 @@ def main(_):
         labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
         jacobian_dev = None
         if FLAGS.gpu:
-            num_gpus = len(tf.config.list_physical_devices('GPU'))
-            jacobian_dev = [f"/job:{features_party_job}/replica:0/task:0/device:GPU:{i}" for i in range(num_gpus)]
+            num_gpus = len(tf.config.list_physical_devices("GPU"))
+            jacobian_dev = [
+                f"/job:{features_party_job}/replica:0/task:0/device:GPU:{i}"
+                for i in range(num_gpus)
+            ]
 
         if FLAGS.party == "f":
             this_job = features_party_job
@@ -94,9 +101,9 @@ def main(_):
     # Set up training data. Split the training set into 60% and 40% to end up
     # with 15,000 examples for training, 10,000 examples for validation and
     # 25,000 examples for testing.
-    train_data, val_data, test_data = tfds.load(
+    train_data, val_data = tfds.load(
         name="imdb_reviews",
-        split=("train[:60%]", "train[60%:]", "test"),
+        split=("train", "test"),
         as_supervised=True,
     )
 
@@ -107,26 +114,46 @@ def main(_):
 
     with tf.device(labels_party_dev):
         # One-hot encode the labels for training data on the features party.
-        labels_dataset = train_data.map(lambda x,y: tf.one_hot(tf.cast(y, tf.int32), 2)).batch(2**12)
+        labels_dataset = train_data.map(
+            lambda x, y: tf.one_hot(tf.cast(y, tf.int32), 2)
+        ).batch(2**12)
 
     with tf.device(features_party_dev):
-        features_dataset = train_data.map(lambda x,y: x).batch(2**12)
+        features_dataset = train_data.map(lambda x, y: x).batch(2**12)
         val_data = val_data.shuffle(buffer_size=1024).batch(32)
-        test_data = test_data.shuffle(buffer_size=1024).batch(32)
+
+        stop_words = nltk.corpus.stopwords.words("english")
+
+        def custom_standardization(input_data):
+            lowercase = tf.strings.lower(input_data)
+            no_punctuation = tf.strings.regex_replace(
+                lowercase, f"[{string.punctuation}]", ""
+            )
+            words = tf.strings.split(no_punctuation)
+            stopwords_set = tf.constant(stop_words)
+            no_stopwords = tf.ragged.boolean_mask(
+                words,
+                ~tf.reduce_any(
+                    tf.equal(words[:, :, tf.newaxis], stopwords_set), axis=-1
+                ),
+            )
+            return tf.strings.reduce_join(no_stopwords, separator=" ", axis=-1)
 
         # Create the text vectorization layer.
         vocab_size = 10000  # This dataset has 92061 unique words.
-        max_length = 250
+        max_length = 100
         embedding_dim = 16
         vectorize_layer = tf.keras.layers.TextVectorization(
             max_tokens=vocab_size,
             output_mode="int",
+            standardize=custom_standardization,
+            output_sequence_length=max_length,
         )
         vectorize_layer.adapt(features_dataset)
 
         # Add the text vectorization layer as a preprocessing step in the datasets.
         def preprocess_features(text):
-            return (vectorize_layer(text))
+            return vectorize_layer(text)
 
         # Additionally, one-hot encode the labels for validation data.
         def preprocess_all(text, label):
@@ -134,7 +161,6 @@ def main(_):
 
         features_dataset = features_dataset.map(preprocess_features)
         val_data = val_data.map(preprocess_all)
-        test_data = test_data.map(preprocess_all)
 
         cache_path = "./cache-imdb-post-scale/"
 
@@ -161,7 +187,7 @@ def main(_):
                     cache_path=cache_path,
                 )
 
-        def noise_context_fn (read_cache):
+        def noise_context_fn(read_cache):
             if FLAGS.eager_mode:
                 return tf_shell.create_context64(
                     log_n=12,
@@ -178,6 +204,9 @@ def main(_):
                 )
 
         # Create the model.
+        # vectorization layer input: [batch_size, string (variable length)]
+        # embedding layer input: [batch_size, int token number (max_length)]
+        # pooling layer input: [batch_size, max_length, embedding (embedding_dim)]
         model = tf_shell_ml.PostScaleSequential(
             layers=[
                 tf.keras.layers.Embedding(
@@ -199,6 +228,11 @@ def main(_):
             noise_multiplier=FLAGS.noise_multiplier,
             cache_path=cache_path,
             jacobian_devices=jacobian_dev,
+            # Debug flags below
+            # check_overflow_INSECURE=True,
+            # disable_encryption=True,
+            # disable_masking=True,
+            # disable_noise=True,
         )
 
         model.compile(
@@ -218,7 +252,7 @@ def main(_):
         learning_rate=FLAGS.learning_rate,
         party=FLAGS.party,
         gpu_enabled=FLAGS.gpu,
-        num_gpus=len(tf.config.list_physical_devices('GPU')),
+        num_gpus=len(tf.config.list_physical_devices("GPU")),
         layers=model.layers,
         cluster_spec=FLAGS.cluster_spec,
         target_delta=1e-5,
