@@ -90,6 +90,14 @@ class ExperimentTensorBoard(tf.keras.callbacks.TensorBoard):
             tf.summary.scalar("noise_cleartext_sz", self.noise_cleartext_sz, step=0)
             tf.summary.scalar("noise_noise_offset", self.noise_noise_offset, step=0)
             tf.summary.scalar("eager_mode", tf.config.functions_run_eagerly(), step=0)
+            tf.summary.scalar(
+                "check_overflow_INSECURE", self.model.check_overflow_INSECURE, step=0
+            )
+            tf.summary.scalar(
+                "disable_encryption", self.model.disable_encryption, step=0
+            )
+            tf.summary.scalar("disable_masking", self.model.disable_masking, step=0)
+            tf.summary.scalar("disable_noise", self.model.disable_noise, step=0)
 
         # Start network monitoring if the labels party is running on a different
         # machine.

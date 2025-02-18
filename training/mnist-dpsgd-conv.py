@@ -33,6 +33,7 @@ flags.DEFINE_integer("backprop_noise_offset", 48, "Noise offset for backpropagat
 flags.DEFINE_integer("noise_cleartext_sz", 38, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 31, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
+flags.DEFINE_bool("plaintext", False, "Run without encryption, noise, or masking.")
 FLAGS = flags.FLAGS
 
 
@@ -204,10 +205,10 @@ def main(_):
             noise_multiplier=FLAGS.noise_multiplier,
             cache_path=cache_path,
             jacobian_devices=jacobian_dev,
+            disable_encryption=FLAGS.plaintext,
+            disable_masking=FLAGS.plaintext,
+            disable_noise=FLAGS.plaintext,
             # check_overflow_INSECURE=True,
-            # disable_encryption=True,
-            # disable_masking=True,
-            # disable_noise=True,
         )
 
         model.compile(
