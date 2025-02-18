@@ -3,12 +3,16 @@ import atexit
 import sys
 import dp_accounting
 import tensorflow as tf
+from typing import Callable
 
 job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
 labels_party_job = f"{job_prefix}labels"
 
-def compute_epsilon(steps, batch_size, training_num_samples, noise_multiplier, target_delta):
+
+def compute_epsilon(
+    steps, batch_size, training_num_samples, noise_multiplier, target_delta
+):
     """Computes epsilon value for given hyperparameters."""
     if noise_multiplier == 0.0:
         return float("inf")
@@ -84,9 +88,15 @@ class ExperimentTensorBoard(tf.keras.callbacks.TensorBoard):
             tf.summary.scalar("target_delta", self.target_delta, step=0)
             tf.summary.scalar("training_num_samples", self.training_num_samples, step=0)
             tf.summary.scalar("planned_epochs", self.epochs, step=0)
-            tf.summary.scalar("backprop_cleartext_sz", self.backprop_cleartext_sz, step=0)
-            tf.summary.scalar("backprop_scaling_factor", self.backprop_scaling_factor, step=0)
-            tf.summary.scalar("backprop_noise_offset", self.backprop_noise_offset, step=0)
+            tf.summary.scalar(
+                "backprop_cleartext_sz", self.backprop_cleartext_sz, step=0
+            )
+            tf.summary.scalar(
+                "backprop_scaling_factor", self.backprop_scaling_factor, step=0
+            )
+            tf.summary.scalar(
+                "backprop_noise_offset", self.backprop_noise_offset, step=0
+            )
             tf.summary.scalar("noise_cleartext_sz", self.noise_cleartext_sz, step=0)
             tf.summary.scalar("noise_noise_offset", self.noise_noise_offset, step=0)
             tf.summary.scalar("eager_mode", tf.config.functions_run_eagerly(), step=0)
@@ -121,7 +131,10 @@ class ExperimentTensorBoard(tf.keras.callbacks.TensorBoard):
                 eps = float("inf")
             else:
                 eps = compute_epsilon(
-                    steps=self.epochs * (self.training_num_samples // self.model.batch_size),  # always drops remainder
+                    steps=self.epochs
+                    * (
+                        self.training_num_samples // self.model.batch_size
+                    ),  # always drops remainder
                     batch_size=self.model.batch_size,
                     training_num_samples=self.training_num_samples,
                     noise_multiplier=self.model.noise_multiplier,
@@ -242,3 +255,46 @@ def get_byte_count(direction="both"):
     except subprocess.CalledProcessError as e:
         print(f"Error getting byte count: {e}", file=sys.stderr)
         return 0 if direction != "both" else (0, 0)
+
+# Based on Transformers implementation.
+class LRWarmUp(tf.keras.optimizers.schedules.LearningRateSchedule):
+    def __init__(
+        self,
+        initial_learning_rate: float,
+        decay_schedule_fn: Callable,
+        warmup_steps: int,
+        power: float = 1.0,
+        name: str = None,
+    ):
+        super().__init__()
+        self.initial_learning_rate = initial_learning_rate
+        self.warmup_steps = warmup_steps
+        self.power = power
+        self.decay_schedule_fn = decay_schedule_fn
+        self.name = name
+
+    def __call__(self, step):
+        with tf.name_scope(self.name or "WarmUp") as name:
+            # Implements polynomial warmup. i.e., if global_step < warmup_steps, the
+            # learning rate will be `global_step/num_warmup_steps * init_lr`.
+            global_step_float = tf.cast(step, tf.float32)
+            warmup_steps_float = tf.cast(self.warmup_steps, tf.float32)
+            warmup_percent_done = global_step_float / warmup_steps_float
+            warmup_learning_rate = self.initial_learning_rate * tf.math.pow(
+                warmup_percent_done, self.power
+            )
+            return tf.cond(
+                global_step_float < warmup_steps_float,
+                lambda: warmup_learning_rate,
+                lambda: self.decay_schedule_fn(step - self.warmup_steps),
+                name=name,
+            )
+
+    def get_config(self):
+        return {
+            "initial_learning_rate": self.initial_learning_rate,
+            "decay_schedule_fn": self.decay_schedule_fn,
+            "warmup_steps": self.warmup_steps,
+            "power": self.power,
+            "name": self.name,
+        }

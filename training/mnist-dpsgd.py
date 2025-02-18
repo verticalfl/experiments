@@ -10,7 +10,12 @@ import tf_shell_ml
 import os
 import signal
 import sys
-from experiment_utils import features_party_job, labels_party_job, ExperimentTensorBoard
+from experiment_utils import (
+    features_party_job,
+    labels_party_job,
+    ExperimentTensorBoard,
+    LRWarmUp,
+)
 
 flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
 flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
@@ -108,18 +113,18 @@ def main(_):
     with tf.device(labels_party_dev):
         labels_dataset = (
             tf.data.Dataset.from_tensor_slices((x_train, y_train))
-            .shuffle(2**14, seed=shuffle_seed)
+            # .shuffle(2**14, seed=shuffle_seed)  # Works with HE but not plaintext?
             .map(lambda x, y: y)
         )
-        labels_dataset = labels_dataset.batch(2**10)
+        labels_dataset = labels_dataset.batch(2**12)
 
     with tf.device(features_party_dev):
         features_dataset = (
             tf.data.Dataset.from_tensor_slices((x_train, y_train))
-            .shuffle(2**14, seed=shuffle_seed)
+            # .shuffle(2**14, seed=shuffle_seed)  # Works with HE but not plaintext?
             .map(lambda x, y: x)
         )
-        features_dataset = features_dataset.batch(2**10)
+        features_dataset = features_dataset.batch(2**12)
 
         val_dataset = tf.data.Dataset.from_tensor_slices((x_test, y_test))
         val_dataset = val_dataset.batch(32)
@@ -193,9 +198,21 @@ def main(_):
             # check_overflow_INSECURE=True,
         )
 
+        # Learning rate warm up is good practice for large batch sizes.
+        # see https://arxiv.org/pdf/1706.02677
+        lr_schedule = LRWarmUp(
+            initial_learning_rate=FLAGS.learning_rate,
+            decay_schedule_fn=tf.keras.optimizers.schedules.ExponentialDecay(
+                FLAGS.learning_rate,
+                decay_steps=1,
+                decay_rate=1,
+            ),
+            warmup_steps=32,
+        )
+
         model.compile(
             loss=tf.keras.losses.CategoricalCrossentropy(),
-            optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate, beta_1=0.8),
+            optimizer=tf.keras.optimizers.Adam(lr_schedule, beta_1=0.8),
             metrics=[tf.keras.metrics.CategoricalAccuracy()],
         )
 
