@@ -4,6 +4,7 @@ import sys
 import dp_accounting
 import tensorflow as tf
 from typing import Callable
+import keras
 
 job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
@@ -32,12 +33,14 @@ def compute_epsilon(
     return accountant.get_epsilon(target_delta=target_delta)
 
 
-class ExperimentTensorBoard(tf.keras.callbacks.TensorBoard):
+# Note: This class must override the Keras TensorBoard callback, not the
+# TensorFlow TensorBoard callback as the latter does not correctly store
+# hyperparameters when using keras tuner.
+class ExperimentTensorBoard(keras.callbacks.TensorBoard):
     def __init__(
         self,
         log_dir,
         noise_multiplier,
-        learning_rate,
         party,
         gpu_enabled,
         num_gpus,
@@ -46,16 +49,10 @@ class ExperimentTensorBoard(tf.keras.callbacks.TensorBoard):
         target_delta,
         training_num_samples,
         epochs,
-        backprop_cleartext_sz,
-        backprop_scaling_factor,
-        backprop_noise_offset,
-        noise_cleartext_sz,
-        noise_noise_offset,
         **kwargs,
     ):
-        super().__init__(log_dir=log_dir, **kwargs)
+        super().__init__(log_dir, **kwargs)
         self.noise_multiplier = noise_multiplier
-        self.learning_rate = learning_rate
         self.party = party
         self.gpu_enabled = gpu_enabled
         self.num_gpus = num_gpus
@@ -64,11 +61,6 @@ class ExperimentTensorBoard(tf.keras.callbacks.TensorBoard):
         self.target_delta = target_delta
         self.training_num_samples = training_num_samples
         self.epochs = epochs
-        self.backprop_cleartext_sz = backprop_cleartext_sz
-        self.backprop_scaling_factor = backprop_scaling_factor
-        self.backprop_noise_offset = backprop_noise_offset
-        self.noise_cleartext_sz = noise_cleartext_sz
-        self.noise_noise_offset = noise_noise_offset
 
     def on_train_begin(self, logs=None):
         super().on_train_begin(logs)
@@ -77,7 +69,6 @@ class ExperimentTensorBoard(tf.keras.callbacks.TensorBoard):
         # is computed (per batch accuracy not logged when encryption enabled).
         with self._val_writer.as_default():
             tf.summary.scalar("noise_multiplier", self.noise_multiplier, step=0)
-            tf.summary.scalar("learning_rate", self.learning_rate, step=0)
             tf.summary.text("party", self.party, step=0)
             tf.summary.scalar("gpu_enabled", self.gpu_enabled, step=0)
             tf.summary.scalar("num_gpus", self.num_gpus, step=0)
@@ -88,17 +79,6 @@ class ExperimentTensorBoard(tf.keras.callbacks.TensorBoard):
             tf.summary.scalar("target_delta", self.target_delta, step=0)
             tf.summary.scalar("training_num_samples", self.training_num_samples, step=0)
             tf.summary.scalar("planned_epochs", self.epochs, step=0)
-            tf.summary.scalar(
-                "backprop_cleartext_sz", self.backprop_cleartext_sz, step=0
-            )
-            tf.summary.scalar(
-                "backprop_scaling_factor", self.backprop_scaling_factor, step=0
-            )
-            tf.summary.scalar(
-                "backprop_noise_offset", self.backprop_noise_offset, step=0
-            )
-            tf.summary.scalar("noise_cleartext_sz", self.noise_cleartext_sz, step=0)
-            tf.summary.scalar("noise_noise_offset", self.noise_noise_offset, step=0)
             tf.summary.scalar("eager_mode", tf.config.functions_run_eagerly(), step=0)
             tf.summary.scalar(
                 "check_overflow_INSECURE", self.model.check_overflow_INSECURE, step=0

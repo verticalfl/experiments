@@ -8,3 +8,4 @@ importlib-resources
 # IMDB dataset
 tensorflow_hub
 tensorflow_datasets
+keras_tuner

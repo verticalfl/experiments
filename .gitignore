@@ -2,3 +2,4 @@
 **/cache-*/**
 **/tflogs/**
 **/__pycache__
+**/kerastuner
