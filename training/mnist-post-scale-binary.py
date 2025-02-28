@@ -79,7 +79,7 @@ class HyperModel(kt.HyperModel):
                         "backprop_noise_offset", values=[0, 8, 16, 32, 48], default=FLAGS.backprop_noise_offset
                     ),
                     read_from_cache=read_cache,
-                    cache_path=cache_path,
+                    cache_path=self.cache_path,
                 )
 
         def noise_context_fn (read_cache):
@@ -99,7 +99,7 @@ class HyperModel(kt.HyperModel):
                         # 0 and 40 correspond to ring degree of 2**12 and 2**13
                     ),
                     read_from_cache=read_cache,
-                    cache_path=cache_path,
+                    cache_path=self.cache_path,
                 )
 
         # Create the model. When using post scale, use standard Keras layers.
@@ -118,7 +118,7 @@ class HyperModel(kt.HyperModel):
             disable_encryption=FLAGS.plaintext,
             disable_masking=FLAGS.plaintext,
             disable_noise=FLAGS.plaintext,
-            check_overflow_INSECURE=FLAGS.check_overflow,
+            check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
 
         model.build(input_shape=(None, 784))

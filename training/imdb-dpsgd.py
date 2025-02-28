@@ -138,7 +138,7 @@ class HyperModel(kt.HyperModel):
             disable_masking=FLAGS.plaintext,
             # disable_noise=FLAGS.plaintext,
             disable_noise=False,
-            check_overflow_INSECURE=FLAGS.check_overflow,
+            check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
 
         # Learning rate warm up is good practice for large batch sizes.

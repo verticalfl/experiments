@@ -140,7 +140,7 @@ class HyperModel(kt.HyperModel):
             disable_encryption=FLAGS.plaintext,
             disable_masking=FLAGS.plaintext,
             disable_noise=FLAGS.plaintext,
-            check_overflow_INSECURE=FLAGS.check_overflow,
+            check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
 
         # Learning rate warm up is good practice for large batch sizes.
@@ -313,7 +313,6 @@ def main(_):
         logdir,
         # ExperimentTensorBoard kwargs.
         noise_multiplier=FLAGS.noise_multiplier,
-        learning_rate=FLAGS.learning_rate,
         party=FLAGS.party,
         gpu_enabled=FLAGS.gpu,
         num_gpus=len(tf.config.list_physical_devices("GPU")),
