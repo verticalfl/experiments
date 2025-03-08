@@ -20,11 +20,9 @@ class ExperimentTensorBoard(keras.callbacks.TensorBoard):
     def __init__(
         self,
         log_dir,
-        noise_multiplier,
         party,
         gpu_enabled,
         num_gpus,
-        layers,
         cluster_spec,
         target_delta,
         training_num_samples,
@@ -32,11 +30,9 @@ class ExperimentTensorBoard(keras.callbacks.TensorBoard):
         **kwargs,
     ):
         super().__init__(log_dir, **kwargs)
-        self.noise_multiplier = noise_multiplier
         self.party = party
         self.gpu_enabled = gpu_enabled
         self.num_gpus = num_gpus
-        self.layers = layers
         self.cluster_spec = cluster_spec
         self.target_delta = target_delta
         self.training_num_samples = training_num_samples
@@ -48,13 +44,9 @@ class ExperimentTensorBoard(keras.callbacks.TensorBoard):
         # Write metadata to the validation logs, as this is where the accuracy
         # is computed (per batch accuracy not logged when encryption enabled).
         with self._val_writer.as_default():
-            tf.summary.scalar("noise_multiplier", self.noise_multiplier, step=0)
             tf.summary.text("party", self.party, step=0)
             tf.summary.scalar("gpu_enabled", self.gpu_enabled, step=0)
             tf.summary.scalar("num_gpus", self.num_gpus, step=0)
-            for i, layer in enumerate(self.layers):
-                tf.summary.text(f"layer_{i}_type", layer.__class__.__name__, step=0)
-                tf.summary.text(f"layer_{i}_config", str(layer.get_config()), step=0)
             tf.summary.text("cluster_spec", self.cluster_spec, step=0)
             tf.summary.scalar("target_delta", self.target_delta, step=0)
             tf.summary.scalar("training_num_samples", self.training_num_samples, step=0)
@@ -87,7 +79,7 @@ class ExperimentTensorBoard(keras.callbacks.TensorBoard):
                 tf.summary.scalar("bytes_sent", bytes_sent, step=0)
 
             # Compute the privacy budget expended.
-            if self.noise_multiplier == 0.0:
+            if self.model.noise_multiplier == 0.0:
                 eps = float("inf")
             else:
                 eps = compute_epsilon(

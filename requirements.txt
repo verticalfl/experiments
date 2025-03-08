@@ -1,4 +1,4 @@
-tf-shell==0.1.31
+tf-shell==0.1.32
 dp-accounting==0.4.4
 nltk==3.9.1
 tensorboard-plugin-profile

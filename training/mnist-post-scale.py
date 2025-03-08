@@ -1,4 +1,5 @@
 import time
+import math
 from datetime import datetime
 import tensorflow as tf
 from absl import app
@@ -8,18 +9,24 @@ import numpy as np
 import tf_shell
 import tf_shell_ml
 import os
+import json
+import hashlib
 import signal
 import sys
 import keras_tuner as kt
+import json
+import hashlib
 from experiment_utils import (
     features_party_job,
     labels_party_job,
     ExperimentTensorBoard,
     LRWarmUp,
 )
+from noise_multiplier_finder import search_noise_multiplier
 
 flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
-flags.DEFINE_float("noise_multiplier", 1.00, "Noise multiplier for DP-SGD")
+flags.DEFINE_float("beta_1", 0.8, "Beta 1 for Adam optimizer")
+flags.DEFINE_float("epsilon", 1.0, "Differential privacy parameter")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
     "party", "b", ["f", "l", "b"], "Which party is this, `f` `l`, or `b`, for feature, label, or both."
@@ -46,12 +53,49 @@ FLAGS = flags.FLAGS
 
 
 class HyperModel(kt.HyperModel):
-    def __init__(self, labels_party_dev, features_party_dev, jacobian_devs, cache_path):
+    def __init__(self, labels_party_dev, features_party_dev, jacobian_devs, cache_path, num_examples):
         super().__init__()
         self.labels_party_dev = labels_party_dev
         self.features_party_dev = features_party_dev
         self.jacobian_devs = jacobian_devs
         self.cache_path = cache_path
+        self.num_examples = num_examples
+
+    def hp_hash(self, hp_dict):
+        """Returns a stable short hash for a dictionary of hyperparameter values."""
+        # Convert dict to canonical JSON string and hash it
+        data = json.dumps(hp_dict, sort_keys=True)
+        return hashlib.md5(data.encode("utf-8")).hexdigest()[:8]
+
+    def get_cache_filename(self, hp_dict):
+        """Returns a path to use for caching these hyperparameters."""
+        os.makedirs(self.cache_path, exist_ok=True)
+        return os.path.join(self.cache_path, f"{self.hp_hash(hp_dict)}.lock")
+
+    def fit(self, hp, model, *args, **kwargs):
+        hp_values = hp.values
+        cache_file = self.get_cache_filename(hp_values)
+
+        # If the cache file already exists, it means we crashed previously.
+        # Read the fail_count from the file.
+        fail_count = 0
+        if os.path.exists(cache_file):
+            with open(cache_file, "r") as f:
+                # Read the existing failure count (default 0 if empty)
+                content = f.read().strip()
+                fail_count = int(content) if content else 0
+
+                if fail_count >= 2:
+                    # This is the 3rd time we've tried these HP, so skip/raise
+                    raise RuntimeError(f"Skipping trial with HP={hp_values} after 2 prior failures.")
+                else:
+                    fail_count += 1
+
+        # Overwrite the number of failures
+        with open(cache_file, "w") as f:
+            f.write(str(fail_count))
+
+        return super().fit(hp, model, *args, **kwargs)
 
     def build(self, hp):
         # Define functions which generate encryption context for the
@@ -60,6 +104,13 @@ class HyperModel(kt.HyperModel):
         # encryption parameters. When executing eagerly, parameters must be
         # specified manually (or simply copied from a previous run which uses
         # autocontext).
+        log2_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=20, max_value=34, step=1, default=FLAGS.backprop_cleartext_sz)
+        scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
+        noise_offset_log2=hp.Choice("backprop_noise_offset", values=[0, 8, 14, 16, 32, 48], default=FLAGS.backprop_noise_offset)
+        log2_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
+        noise_offset_log2=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
+        # 0 and 40 correspond to ring degree of 2**12 and 2**13
+
         def backprop_context_fn(read_cache):
             if FLAGS.eager_mode:
                 return tf_shell.create_context64(
@@ -70,15 +121,9 @@ class HyperModel(kt.HyperModel):
                 )
             else:
                 return tf_shell.create_autocontext64(
-                    log2_cleartext_sz=hp.Int(
-                        "backprop_cleartext_sz", min_value=20, max_value=34, step=1, default=FLAGS.backprop_cleartext_sz
-                    ),
-                    scaling_factor=hp.Choice(
-                        "backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor
-                    ),
-                    noise_offset_log2=hp.Choice(
-                        "backprop_noise_offset", values=[0, 8, 14, 16, 32, 48], default=FLAGS.backprop_noise_offset
-                    ),
+                    log2_cleartext_sz=log2_cleartext_sz,
+                    scaling_factor=scaling_factor,
+                    noise_offset_log2=noise_offset_log2,
                     read_from_cache=read_cache,
                     cache_path=self.cache_path,
                 )
@@ -92,16 +137,23 @@ class HyperModel(kt.HyperModel):
                 )
             else:
                 return tf_shell.create_autocontext64(
-                    log2_cleartext_sz=hp.Int(
-                        "noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz
-                    ),
-                    noise_offset_log2=hp.Choice(
-                        "noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset
-                        # 0 and 40 correspond to ring degree of 2**12 and 2**13
-                    ),
+                    log2_cleartext_sz=log2_cleartext_sz,
+                    noise_offset_log2=noise_offset_log2,
                     read_from_cache=read_cache,
                     cache_path=self.cache_path,
                 )
+
+        def noise_multiplier_fn(batch_size):
+            # Set delta to 1/num_examples, rounded to nearest power of 10.
+            target_delta = 10**int(math.floor(math.log10(1 / self.num_examples)))
+            print(f"Target delta {target_delta}")
+            return search_noise_multiplier(
+                target_epsilon=FLAGS.epsilon,
+                target_delta=target_delta,
+                epochs=FLAGS.epochs,
+                training_num_samples=self.num_examples,
+                batch_size=batch_size,
+            )
 
         # Create the model. When using post scale, you can use either Shell*
         # layers or standard Keras layers.
@@ -112,9 +164,9 @@ class HyperModel(kt.HyperModel):
             ],
             backprop_context_fn=backprop_context_fn,
             noise_context_fn=noise_context_fn,
+            noise_multiplier_fn=noise_multiplier_fn,
             labels_party_dev=self.labels_party_dev,
             features_party_dev=self.features_party_dev,
-            noise_multiplier=FLAGS.noise_multiplier,
             cache_path=self.cache_path,
             # jacobian_pfor=True,
             # jacobian_pfor_iterations=128,
@@ -138,7 +190,7 @@ class HyperModel(kt.HyperModel):
             warmup_steps=32,
         )
 
-        beta_1 = hp.Choice("beta_1", values=[0.7, 0.8, 0.9], default=0.8)
+        beta_1 = hp.Choice("beta_1", values=[0.7, 0.8, 0.9], default=FLAGS.beta_1)
         model.compile(
             loss=tf.keras.losses.CategoricalCrossentropy(),
             optimizer=tf.keras.optimizers.Adam(lr_schedule, beta_1=beta_1),
@@ -240,20 +292,20 @@ def main(_):
             features_party_dev=features_party_dev,
             jacobian_devs=jacobian_dev,
             cache_path="cache-mnist-postscale",
+            num_examples=num_examples,
         )
 
-        tuner = kt.Hyperband(
+        tuner = kt.RandomSearch(
             hypermodel,
-            objective=kt.Objective("val_categorical_accuracy", direction="max"),
-            max_epochs=10,
-            factor=3,
+            max_trials=60,
+            objective=[
+                kt.Objective('val_categorical_accuracy', direction='max'),
+                kt.Objective('time', direction='min')
+            ],
             directory="kerastuner",
             project_name="mnist-postscale",
+            max_consecutive_failed_trials=30,
         )
-
-        keras_hps = kt.HyperParameters()
-        default_hp_model = tuner.hypermodel.build(keras_hps)
-
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -261,11 +313,9 @@ def main(_):
     tb = ExperimentTensorBoard(
         log_dir=logdir,
         # ExperimentTensorBoard kwargs.
-        noise_multiplier=FLAGS.noise_multiplier,
         party=FLAGS.party,
         gpu_enabled=FLAGS.gpu,
         num_gpus=len(tf.config.list_physical_devices('GPU')),
-        layers=default_hp_model.layers,
         cluster_spec=FLAGS.cluster_spec,
         target_delta=1e-5,
         training_num_samples=num_examples,
@@ -275,12 +325,6 @@ def main(_):
         update_freq="batch",
         profile_batch=2,
     )
-
-    # Tensorboard callbacks only write hyperparammeters to the log if their
-    # class is keras.callbacks.TensorBoard. This is a hack to make the
-    # ExperimentTensorBoard class look like a keras.callbacks.TensorBoard
-    # instance.
-    tb.__class__ = keras.callbacks.TensorBoard
 
     stop_early = tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=5)
 
@@ -306,6 +350,8 @@ def main(_):
 
     else:
         # Train the model.
+        keras_hps = kt.HyperParameters()
+        default_hp_model = tuner.hypermodel.build(keras_hps)
         history = default_hp_model.fit(
             features_dataset,
             labels_dataset,
