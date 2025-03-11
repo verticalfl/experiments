@@ -25,7 +25,7 @@ import keras_tuner as kt
 
 nltk.download("stopwords")
 
-flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
+flags.DEFINE_float("learning_rate", 0.1, "Learning rate for training")
 flags.DEFINE_float("beta_1", 0.8, "Beta 1 for Adam optimizer")
 flags.DEFINE_float("epsilon", 1.0, "Differential privacy parameter")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
@@ -44,11 +44,11 @@ flags.DEFINE_string(
 }}""",
     "Cluster spec",
 )
-flags.DEFINE_integer("backprop_cleartext_sz", 21, "Cleartext size for backpropagation")
-flags.DEFINE_integer("backprop_scaling_factor", 2, "Scaling factor for backpropagation")
-flags.DEFINE_integer("backprop_noise_offset", 40, "Noise offset for backpropagation")
+flags.DEFINE_integer("backprop_cleartext_sz", 23, "Cleartext size for backpropagation")
+flags.DEFINE_integer("backprop_scaling_factor", 32, "Scaling factor for backpropagation")
+flags.DEFINE_integer("backprop_noise_offset", 0, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
-flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
+flags.DEFINE_integer("noise_noise_offset", 40, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
 flags.DEFINE_bool("plaintext", False, "Run without encryption, noise, or masking.")
 flags.DEFINE_bool("check_overflow", False, "Check for overflow in the protocol.")
