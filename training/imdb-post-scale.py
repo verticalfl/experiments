@@ -17,7 +17,7 @@ import nltk
 from experiment_utils import (
     features_party_job,
     labels_party_job,
-    ExperimentTensorBoard,
+    TensorBoard,
     LRWarmUp,
 )
 from noise_multiplier_finder import search_noise_multiplier
@@ -343,34 +343,11 @@ def main(_):
             num_examples=num_examples,
         )
 
-        # Hyperband will tune hyperparameters to optimize a single objective
-        # like accuracy. However, there are two issues. 1) we care about
-        # multiple objectives, accuracy and time. 2) When the training OOMs on
-        # the first trial, it doesn't record the trial and gets stuck in an
-        # infinite loop.
-        # tuner = kt.Hyperband(
-        #     objective=kt.Objective("val_categorical_accuracy", direction="max"),
-        #     max_epochs=10,
-        #     factor=3,
-
-        # Random search will allow us to better 
-        tuner = kt.RandomSearch(
-            hypermodel,
-            max_trials=60,
-            objective=[
-                kt.Objective('val_categorical_accuracy', direction='max'),
-                kt.Objective('time', direction='min')
-            ],
-            directory="kerastuner",
-            project_name="imdb-post-scale",
-            max_consecutive_failed_trials=30,
-        )
-
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     logdir = os.path.abspath("") + f"/tflogs/imdb-post-scale-{stamp}"
 
-    tb = ExperimentTensorBoard(
+    tb = TensorBoard(
         logdir,
         # ExperimentTensorBoard kwargs.
         party=FLAGS.party,
@@ -390,6 +367,17 @@ def main(_):
 
     if FLAGS.tune:
         # Tune the hyperparameters.
+        tuner = kt.RandomSearch(
+            hypermodel,
+            max_trials=60,
+            objective=[
+                kt.Objective('val_categorical_accuracy', direction='max'),
+                kt.Objective('time', direction='min')
+            ],
+            directory="kerastuner",
+            project_name="imdb-post-scale",
+            max_consecutive_failed_trials=30,
+        )
         tuner.search_space_summary()
         tuner.search(
             features_dataset,
@@ -410,9 +398,21 @@ def main(_):
 
     else:
         # Train the model.
-        keras_hps = kt.HyperParameters()
-        default_hp_model = tuner.hypermodel.build(keras_hps)
-        history = default_hp_model.fit(
+        tuner = kt.GridSearch(
+            hypermodel,
+            max_trials=1,
+            objective=[
+                kt.Objective('val_categorical_accuracy', direction='max'),
+                kt.Objective('time', direction='min')
+            ],
+            directory="kerastuner",
+            project_name="default_hps",
+            max_consecutive_failed_trials=1,
+            overwrite=True,  # Always overwrite previous runs.
+        )
+        trial = tuner.oracle.create_trial("single_run_trial")
+        tuner.run_trial(
+            trial,
             features_dataset,
             labels_dataset,
             epochs=FLAGS.epochs,

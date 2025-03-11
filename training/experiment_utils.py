@@ -13,10 +13,12 @@ features_party_job = f"{job_prefix}features"
 labels_party_job = f"{job_prefix}labels"
 
 
-# Note: This class must override the Keras TensorBoard callback, not the
-# TensorFlow TensorBoard callback as the latter does not correctly store
-# hyperparameters when using keras tuner.
-class ExperimentTensorBoard(keras.callbacks.TensorBoard):
+# WARNING: Do not change the name of this class.
+# Tensorboard callback only writes hyperparammeters to the log if the name of
+# the class "TensorBoard", due to a limitation in how keras tuner works.
+# See this link for the specific line:
+# https://github.com/keras-team/keras-tuner/blob/417e5b5e8df924d428a3c64007f3ed47bd4c7026/keras_tuner/engine/tuner.py#L424
+class TensorBoard(keras.callbacks.TensorBoard):
     def __init__(
         self,
         log_dir,
@@ -79,7 +81,7 @@ class ExperimentTensorBoard(keras.callbacks.TensorBoard):
                 tf.summary.scalar("bytes_sent", bytes_sent, step=0)
 
             # Compute the privacy budget expended.
-            if self.model.noise_multiplier == 0.0:
+            if self.model.noise_multiplier == None or self.model.noise_multiplier == 0.0:
                 eps = float("inf")
             else:
                 eps = compute_epsilon(

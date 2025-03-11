@@ -19,7 +19,7 @@ import hashlib
 from experiment_utils import (
     features_party_job,
     labels_party_job,
-    ExperimentTensorBoard,
+    TensorBoard,
     LRWarmUp,
 )
 from noise_multiplier_finder import search_noise_multiplier
@@ -295,22 +295,10 @@ def main(_):
             num_examples=num_examples,
         )
 
-        tuner = kt.RandomSearch(
-            hypermodel,
-            max_trials=60,
-            objective=[
-                kt.Objective('val_categorical_accuracy', direction='max'),
-                kt.Objective('time', direction='min')
-            ],
-            directory="kerastuner",
-            project_name="mnist-postscale",
-            max_consecutive_failed_trials=30,
-        )
-
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     logdir = os.path.abspath("") + f"/tflogs/post-scale-{stamp}"
-    tb = ExperimentTensorBoard(
+    tb = TensorBoard(
         log_dir=logdir,
         # ExperimentTensorBoard kwargs.
         party=FLAGS.party,
@@ -330,6 +318,17 @@ def main(_):
 
     if FLAGS.tune:
         # Tune the hyperparameters.
+        tuner = kt.RandomSearch(
+            hypermodel,
+            max_trials=60,
+            objective=[
+                kt.Objective('val_categorical_accuracy', direction='max'),
+                kt.Objective('time', direction='min')
+            ],
+            directory="kerastuner",
+            project_name="mnist-postscale",
+            max_consecutive_failed_trials=30,
+        )
         tuner.search_space_summary()
         tuner.search(
             features_dataset,
@@ -350,9 +349,21 @@ def main(_):
 
     else:
         # Train the model.
-        keras_hps = kt.HyperParameters()
-        default_hp_model = tuner.hypermodel.build(keras_hps)
-        history = default_hp_model.fit(
+        tuner = kt.GridSearch(
+            hypermodel,
+            max_trials=1,
+            objective=[
+                kt.Objective('val_categorical_accuracy', direction='max'),
+                kt.Objective('time', direction='min')
+            ],
+            directory="kerastuner",
+            project_name="default_hps",
+            max_consecutive_failed_trials=1,
+            overwrite=True,  # Always overwrite previous runs.
+        )
+        trial = tuner.oracle.create_trial("single_run_trial")
+        tuner.run_trial(
+            trial,
             features_dataset,
             labels_dataset,
             epochs=FLAGS.epochs,
