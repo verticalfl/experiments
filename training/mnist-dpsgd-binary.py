@@ -65,6 +65,9 @@ class HyperModel(kt.HyperModel):
     def hp_hash(self, hp_dict):
         """Returns a stable short hash for a dictionary of hyperparameter values."""
         # Convert dict to canonical JSON string and hash it
+        hp_dict["epsilon"] = FLAGS.epsilon
+        hp_dict["eager_mode"] = FLAGS.eager_mode
+        hp_dict["plaintext"] = FLAGS.plaintext
         data = json.dumps(hp_dict, sort_keys=True)
         return hashlib.md5(data.encode("utf-8")).hexdigest()[:8]
 
