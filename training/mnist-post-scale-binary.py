@@ -106,7 +106,7 @@ class HyperModel(kt.HyperModel):
         # autocontext).
         log2_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=20, max_value=34, step=1, default=FLAGS.backprop_cleartext_sz)
         scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
-        noise_offset_log2=hp.Choice("backprop_noise_offset", values=[0, 8, 16, 32, 48], default=FLAGS.backprop_noise_offset)
+        noise_offset_log2=hp.Choice("backprop_noise_offset", values=[0, 8, 14, 16, 32, 48], default=FLAGS.backprop_noise_offset)
         log2_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
         noise_offset_log2=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
         # 0 and 40 correspond to ring degree of 2**12 and 2**13
