@@ -36,6 +36,9 @@ def search_noise_multiplier(target_epsilon, target_delta, epochs, training_num_s
     """
     Binary search for noise multiplier that achieves target epsilon.
     """
+    if target_epsilon == 0.0:
+        return 0.0
+
     noise_l = 1.0
     noise_r = 100.0
     noise = (noise_l + noise_r) / 2
@@ -63,6 +66,9 @@ def search_noise_multiplier(target_epsilon, target_delta, epochs, training_num_s
 
         # Stop if noise not found.
         if math.isclose(noise_l, noise_r, abs_tol=1e-3):
+            raise ValueError(
+                f"Could not find noise multiplier for target epsilon {target_epsilon}"
+            )
             return None
 
 

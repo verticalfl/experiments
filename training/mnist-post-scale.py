@@ -46,7 +46,7 @@ flags.DEFINE_integer("backprop_noise_offset", 14, "Noise offset for backpropagat
 flags.DEFINE_integer("noise_cleartext_sz", 25, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
-flags.DEFINE_bool("plaintext", False, "Run without encryption, noise, or masking.")
+flags.DEFINE_bool("plaintext", False, "Run without encryption or masking (but with noise).")
 flags.DEFINE_bool("check_overflow", False, "Check for overflow in the protocol.")
 flags.DEFINE_bool("tune", False, "Tune hyperparameters (or use default values).")
 FLAGS = flags.FLAGS
@@ -176,7 +176,6 @@ class HyperModel(kt.HyperModel):
             jacobian_devices=self.jacobian_devs,
             disable_encryption=FLAGS.plaintext,
             disable_masking=FLAGS.plaintext,
-            disable_noise=FLAGS.plaintext,
             check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
 
