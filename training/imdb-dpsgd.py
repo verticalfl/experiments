@@ -5,6 +5,7 @@ import string
 import math
 import json
 import hashlib
+import shutil
 from datetime import datetime
 from absl import app
 from absl import flags
@@ -409,6 +410,12 @@ def main(_):
             overwrite=True,  # Always overwrite previous runs.
         )
         trial = tuner.oracle.create_trial("single_run_trial")
+
+        # Remove the cache path to ignore errors from previous runs.
+        dirpath = os.path.abspath("") + "/cache-mnist-dpsgd-binary"
+        if os.path.exists(dirpath):
+            shutil.rmtree(dirpath)
+
         tuner.run_trial(
             trial,
             features_dataset,
