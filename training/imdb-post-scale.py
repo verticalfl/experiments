@@ -94,9 +94,8 @@ class HyperModel(kt.HyperModel):
                 content = f.read().strip()
                 fail_count = int(content) if content else 0
 
-                if fail_count >= 2:
-                    # This is the 3rd time we've tried these HP, so skip/raise
-                    raise RuntimeError(f"Skipping trial with HP={hp_values} after 2 prior failures.")
+                if fail_count >= 1:
+                    raise RuntimeError(f"Skipping trial with HP={hp_values} after prior failures.")
                 else:
                     fail_count += 1
 
