@@ -58,6 +58,7 @@ flags.DEFINE_bool("check_overflow", False, "Check for overflow in the protocol."
 flags.DEFINE_bool("tune", False, "Tune hyperparameters (or use default values).")
 FLAGS = flags.FLAGS
 
+sentence_length = 100
 
 class HyperModel(kt.HyperModel):
     def __init__(self, labels_party_dev, features_party_dev, jacobian_devs, cache_path, vocab_size, num_examples):
@@ -166,8 +167,8 @@ class HyperModel(kt.HyperModel):
 
         # Create the model.
         # vectorization layer input: [batch_size, string (variable length)]
-        # embedding layer input: [batch_size, int token number (max_length)]
-        # pooling layer input: [batch_size, max_length, embedding (embedding_dim)]
+        # embedding layer input: [batch_size, int token number (sentence_length)]
+        # pooling layer input: [batch_size, sentence_length, embedding (embedding_dim)]
         embedding_dim = hp.Choice("embedding_dim", values=[16, 32], default=16)
         model = tf_shell_ml.PostScaleSequential(
             layers=[
@@ -194,6 +195,8 @@ class HyperModel(kt.HyperModel):
             disable_masking=FLAGS.plaintext,
             check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
+        model.build(input_shape=(None, sentence_length))
+        model.summary()
 
         # Learning rate warm up is good practice for large batch sizes.
         # see https://arxiv.org/pdf/1706.02677
@@ -317,12 +320,11 @@ def main(_):
 
         # Create the text vectorization layer.
         vocab_size = 10000  # This dataset has 92061 unique words.
-        max_length = 100
         vectorize_layer = tf.keras.layers.TextVectorization(
             max_tokens=vocab_size,
             output_mode="int",
             standardize=custom_standardization,
-            output_sequence_length=max_length,
+            output_sequence_length=sentence_length,
         )
         vectorize_layer.adapt(features_dataset)
 
