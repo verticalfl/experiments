@@ -296,6 +296,8 @@ def main(_):
 
         num_examples = int(train_data.cardinality().numpy())
         print("Number of training examples:", num_examples)
+        target_delta = 10**int(math.floor(math.log10(1 / num_examples)))
+        print("Target delta:", target_delta)
 
         stop_words = nltk.corpus.stopwords.words("english")
 
@@ -355,7 +357,7 @@ def main(_):
         gpu_enabled=FLAGS.gpu,
         num_gpus=len(tf.config.list_physical_devices("GPU")),
         cluster_spec=FLAGS.cluster_spec,
-        target_delta=1e-5,
+        target_delta=target_delta,
         training_num_samples=num_examples,
         epochs=FLAGS.epochs,
         # TensorBoard kwargs.
