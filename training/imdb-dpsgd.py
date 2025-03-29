@@ -268,29 +268,30 @@ def main(_):
             server.join()  # Wait for the features party to finish.
             exit(0)
 
-    # Set up training data. Split the training set into 60% and 40% to end up
-    # with 15,000 examples for training, 10,000 examples for validation and
-    # 25,000 examples for testing.
-    train_data, val_data = tfds.load(
-        name="imdb_reviews",
-        split=("train", "test"),
-        as_supervised=True,
-    )
-
-    num_examples = int(train_data.cardinality().numpy())
-    print("Number of training examples:", num_examples)
-
     tf.config.run_functions_eagerly(FLAGS.eager_mode)
 
     with tf.device(labels_party_dev):
+        train_data, val_data = tfds.load(
+            name="imdb_reviews",
+            split=("train", "test"),
+            as_supervised=True,
+        )
         # One-hot encode the labels for training data on the features party.
         labels_dataset = train_data.map(
             lambda x, y: tf.one_hot(tf.cast(y, tf.int32), 2)
         ).batch(2**12)
 
     with tf.device(features_party_dev):
+        train_data, val_data = tfds.load(
+            name="imdb_reviews",
+            split=("train", "test"),
+            as_supervised=True,
+        )
         features_dataset = train_data.map(lambda x, y: x).batch(2**12)
         val_data = val_data.shuffle(buffer_size=1024).batch(32)
+
+        num_examples = int(train_data.cardinality().numpy())
+        print("Number of training examples:", num_examples)
 
         stop_words = nltk.corpus.stopwords.words("english")
 
