@@ -42,7 +42,7 @@ flags.DEFINE_integer("backprop_cleartext_sz", 23, "Cleartext size for backpropag
 flags.DEFINE_integer("backprop_scaling_factor", 2, "Scaling factor for backpropagation")
 flags.DEFINE_integer("backprop_noise_offset", 48, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 38, "Cleartext size for noise")
-flags.DEFINE_integer("noise_noise_offset", 31, "Noise offset for noise")
+flags.DEFINE_integer("noise_noise_offset", 40, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
 flags.DEFINE_bool("plaintext", False, "Run without encryption or masking (but with noise).")
 flags.DEFINE_bool("check_overflow", False, "Check for overflow in the protocol.")
