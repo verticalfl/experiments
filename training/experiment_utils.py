@@ -7,11 +7,31 @@ from typing import Callable
 import keras
 from noise_multiplier_finder import compute_epsilon
 from netio_mon import setup_traffic_monitoring, get_byte_count
+import numpy as np
 
 job_prefix = "tfshell"
 features_party_job = f"{job_prefix}features"
 labels_party_job = f"{job_prefix}labels"
 
+
+def randomized_response_label_flip(labels, epsilon, num_classes=10):
+    """
+    Randomly flip the lables according to randomized response.
+    Sample a random number between 0 and 1 for each label, and if it is
+    less than e**epsilon / (e**epsilon + K + 1) where K is the number of
+    classes, replace the label with a random label (which is not the same
+    as the original).
+    """
+    # Generate the random labels, which are from [0, n-1] and [n+1, 9], each
+    # of which is equally likely. The exluded value n is the o original
+    # label. To do so, generate from [0,8], then add 1 to the labels which
+    # are >= to n.
+    random_labels = tf.random.uniform(tf.shape(labels), maxval=num_classes-2, dtype=labels.dtype)
+    random_labels = tf.where(random_labels >= labels, random_labels + 1, random_labels)
+
+    coins = tf.random.uniform(tf.shape(labels))
+    thresh = np.exp(epsilon) / (np.exp(epsilon) + num_classes + 1)
+    return tf.where(coins < thresh, labels, random_labels)
 
 # WARNING: Do not change the name of this class.
 # Tensorboard callback only writes hyperparammeters to the log if the name of

@@ -20,6 +20,7 @@ from experiment_utils import (
     labels_party_job,
     TensorBoard,
     LRWarmUp,
+    randomized_response_label_flip,
 )
 from noise_multiplier_finder import search_noise_multiplier
 
@@ -46,6 +47,7 @@ flags.DEFINE_integer("noise_cleartext_sz", 25, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
 flags.DEFINE_bool("plaintext", False, "Run without encryption or masking (but with noise).")
+flags.DEFINE_bool("rand_resp", False, "Flip the labels according to randomized response.")
 flags.DEFINE_bool("check_overflow", False, "Check for overflow in the protocol.")
 flags.DEFINE_bool("tune", False, "Tune hyperparameters (or use default values).")
 FLAGS = flags.FLAGS
@@ -145,6 +147,10 @@ class HyperModel(kt.HyperModel):
                 )
 
         def noise_multiplier_fn(batch_size):
+            # If doing randomized response, we don't need to compute the noise
+            # multiplier. Return 0 to disable noise.
+            if FLAGS.rand_resp:
+                return 0.0
             # Set delta to 1/num_examples, rounded to nearest power of 10.
             target_delta = 10**int(math.floor(math.log10(1 / self.num_examples)))
             print(f"Target delta {target_delta}")
@@ -283,6 +289,19 @@ def main(_):
             .map(lambda x, y: y)
         )
         labels_dataset = labels_dataset.batch(2**12)
+
+        if FLAGS.rand_resp:
+            orig_labels_dataset = labels_dataset
+            labels_dataset = labels_dataset.map(
+                lambda y: randomized_response_label_flip(y, epsilon=FLAGS.epsilon, num_classes=10)
+            )
+
+            l = tf.constant(list(labels_dataset.as_numpy_iterator()))
+            o = tf.constant(list(orig_labels_dataset.as_numpy_iterator()))
+
+            where_flipped = tf.where(tf.not_equal(l, o), tf.ones_like(l), tf.zeros_like(l))
+            tf.reduce_mean(tf.cast(where_flipped, tf.float32), axis=0)
+            tf.print("Fraction of labels flipped:", tf.reduce_mean(tf.cast(where_flipped, tf.float32)))
 
     with tf.device(features_party_dev):
         features_dataset = (
