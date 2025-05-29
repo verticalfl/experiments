@@ -1,4 +1,4 @@
-tf-shell==0.1.34
+tf-shell==0.1.35
 dp-accounting==0.4.4
 nltk==3.9.1
 tensorboard-plugin-profile
@@ -9,3 +9,4 @@ importlib-resources
 tensorflow_hub
 tensorflow_datasets
 keras_tuner
+pillow
