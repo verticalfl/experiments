@@ -78,10 +78,10 @@ class TensorBoard(keras.callbacks.TensorBoard):
                 "check_overflow_INSECURE", self.model.check_overflow_INSECURE, step=0
             )
             tf.summary.scalar(
-                "disable_encryption", self.model.disable_encryption, step=0
+                "disable_he_backprop_INSECURE", self.model.disable_he_backprop_INSECURE, step=0
             )
-            tf.summary.scalar("disable_masking", self.model.disable_masking, step=0)
-            tf.summary.scalar("disable_noise", self.model.disable_noise, step=0)
+            tf.summary.scalar("disable_masking_INSECURE", self.model.disable_masking_INSECURE, step=0)
+            tf.summary.scalar("simple_noise_INSECURE", self.model.simple_noise_INSECURE, step=0)
 
         # Start network monitoring if the labels party is running on a different
         # machine.

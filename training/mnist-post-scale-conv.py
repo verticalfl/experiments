@@ -46,8 +46,8 @@ flags.DEFINE_integer("backprop_noise_offset", 14, "Noise offset for backpropagat
 flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
-flags.DEFINE_bool("plaintext", False, "Run without encryption or masking (but with noise).")
-flags.DEFINE_bool("rand_resp", False, "Flip the labels according to randomized response.")
+flags.DEFINE_bool("dp_sgd", False, "Run without encryption or masking (but with simple additive DP noise).")
+flags.DEFINE_bool("rand_resp", False, "Run without encryption or masking, flipping the labels according to randomized response.")
 flags.DEFINE_bool("check_overflow", False, "Check for overflow in the protocol.")
 flags.DEFINE_bool("tune", False, "Tune hyperparameters (or use default values).")
 FLAGS = flags.FLAGS
@@ -69,7 +69,8 @@ class HyperModel(kt.HyperModel):
         # Convert dict to canonical JSON string and hash it
         hp_dict["epsilon"] = FLAGS.epsilon
         hp_dict["eager_mode"] = FLAGS.eager_mode
-        hp_dict["plaintext"] = FLAGS.plaintext
+        hp_dict["dp-sgd"] = FLAGS.dp_sgd
+        hp_dict["rand_resp"] = FLAGS.rand_resp
         data = json.dumps(hp_dict, sort_keys=True)
         return hashlib.md5(data.encode("utf-8")).hexdigest()[:8]
 
@@ -109,12 +110,23 @@ class HyperModel(kt.HyperModel):
         # encryption parameters. When executing eagerly, parameters must be
         # specified manually (or simply copied from a previous run which uses
         # autocontext).
-        log2_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=20, max_value=34, step=1, default=FLAGS.backprop_cleartext_sz)
-        scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
-        noise_offset_log2=hp.Choice("backprop_noise_offset", values=[0, 8, 14, 16, 32, 48], default=FLAGS.backprop_noise_offset)
-        log2_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
-        noise_offset_log2=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
+        backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=20, max_value=34, step=1, default=FLAGS.backprop_cleartext_sz)
+        backprop_scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
+        backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 14, 16, 32, 48], default=FLAGS.backprop_noise_offset)
+
+        noise_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
+        noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
         # 0 and 40 correspond to ring degree of 2**12 and 2**13
+
+        clip_threshold=None
+        if FLAGS.dp_sgd:
+            clip_threshold = hp.Float(
+                "clip_threshold",
+                min_value=0.1,
+                max_value=100.0,
+                step=0.1,
+                default=1.0,
+            )
 
         def backprop_context_fn(read_cache):
             if FLAGS.eager_mode:
@@ -122,13 +134,13 @@ class HyperModel(kt.HyperModel):
                     log_n=12,
                     main_moduli=[1688880462102529, 2181470596882433],
                     plaintext_modulus=8590090241,
-                    scaling_factor=flags.FLAGS.backprop_scaling_factor,
+                    scaling_factor=FLAGS.backprop_scaling_factor,
                 )
             else:
                 return tf_shell.create_autocontext64(
-                    log2_cleartext_sz=log2_cleartext_sz,
-                    scaling_factor=scaling_factor,
-                    noise_offset_log2=noise_offset_log2,
+                    log2_cleartext_sz=backprop_cleartext_sz,
+                    scaling_factor=backprop_scaling_factor,
+                    noise_offset_log2=backprop_noise_offset,
                     read_from_cache=read_cache,
                     cache_path=self.cache_path,
                 )
@@ -142,8 +154,8 @@ class HyperModel(kt.HyperModel):
                 )
             else:
                 return tf_shell.create_autocontext64(
-                    log2_cleartext_sz=log2_cleartext_sz,
-                    noise_offset_log2=noise_offset_log2,
+                    log2_cleartext_sz=noise_cleartext_sz,
+                    noise_offset_log2=noise_noise_offset,
                     read_from_cache=read_cache,
                     cache_path=self.cache_path,
                 )
@@ -213,8 +225,10 @@ class HyperModel(kt.HyperModel):
             # jacobian_pfor_iterations=2**11,
             # jacobian_pfor_iterations=64,
             jacobian_devices=self.jacobian_devs,
-            disable_encryption=FLAGS.plaintext,
-            disable_masking=FLAGS.plaintext,
+            disable_he_backprop_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
+            disable_masking_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
+            simple_noise_INSECURE= FLAGS.dp_sgd or FLAGS.rand_resp,
+            simple_noise_clip_threshold=clip_threshold,
             check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
 
