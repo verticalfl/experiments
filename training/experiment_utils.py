@@ -26,6 +26,8 @@ def randomized_response_label_flip(labels, epsilon, num_classes=10):
     # of which is equally likely. The exluded value n is the o original
     # label. To do so, generate from [0,8], then add 1 to the labels which
     # are >= to n.
+    if epsilon == 0.0 or epsilon == float("inf"):
+        return labels
     random_labels = tf.random.uniform(tf.shape(labels), maxval=num_classes-2, dtype=labels.dtype)
     random_labels = tf.where(random_labels >= labels, random_labels + 1, random_labels)
 
