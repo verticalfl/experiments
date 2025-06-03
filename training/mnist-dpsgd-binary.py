@@ -47,7 +47,7 @@ flags.DEFINE_integer("backprop_cleartext_sz", 23, "Cleartext size for backpropag
 flags.DEFINE_integer("backprop_scaling_factor", 4, "Scaling factor for backpropagation")
 flags.DEFINE_integer("backprop_noise_offset", 16, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 26, "Cleartext size for noise")
-flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
+flags.DEFINE_integer("noise_noise_offset", 48, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
 flags.DEFINE_bool("dp_sgd", False, "Run without encryption or masking (but with simple additive DP noise).")
 flags.DEFINE_bool("rand_resp", False, "Run without encryption or masking, flipping the labels according to randomized response.")
@@ -116,18 +116,10 @@ class HyperModel(kt.HyperModel):
         backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 16, 32, 48], default=FLAGS.backprop_noise_offset)
 
         noise_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
-        noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
+        noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 48], default=FLAGS.noise_noise_offset)
         # 0 and 40 correspond to ring degree of 2**12 and 2**13
 
-        clip_threshold=None
-        if FLAGS.dp_sgd:
-            clip_threshold = hp.Float(
-                "clip_threshold",
-                min_value=0.1,
-                max_value=100.0,
-                step=0.1,
-                default=1.0,
-            )
+        clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=1.0)
 
         def backprop_context_fn(read_cache):
             if FLAGS.eager_mode:
@@ -201,7 +193,7 @@ class HyperModel(kt.HyperModel):
             disable_he_backprop_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
             disable_masking_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
             simple_noise_INSECURE= FLAGS.dp_sgd or FLAGS.rand_resp,
-            simple_noise_clip_threshold=clip_threshold,
+            clip_threshold=clip_threshold,
             check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
 

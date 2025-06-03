@@ -118,15 +118,7 @@ class HyperModel(kt.HyperModel):
         noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
         # 0 and 40 correspond to ring degree of 2**12 and 2**13
 
-        clip_threshold=None
-        if FLAGS.dp_sgd:
-            clip_threshold = hp.Float(
-                "clip_threshold",
-                min_value=0.1,
-                max_value=100.0,
-                step=0.1,
-                default=1.0,
-            )
+        clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=1.0)
 
         def backprop_context_fn(read_cache):
             if FLAGS.eager_mode:
@@ -195,7 +187,7 @@ class HyperModel(kt.HyperModel):
             disable_he_backprop_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
             disable_masking_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
             simple_noise_INSECURE= FLAGS.dp_sgd or FLAGS.rand_resp,
-            simple_noise_clip_threshold=clip_threshold,
+            clip_threshold=clip_threshold,
             check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
 
