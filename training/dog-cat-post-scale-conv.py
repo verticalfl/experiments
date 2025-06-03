@@ -362,14 +362,14 @@ def main(_):
     
     # Unbatch the dataset because the iterator yields batches, 
     # but we want to map individual samples and then re-batch.
-    # train_tf_dataset_unbatched = train_tf_dataset.unbatch()
+    train_tf_dataset = train_tf_dataset.unbatch()
 
     # Prepare validation dataset
     val_dataset = tf.data.Dataset.from_generator(
         lambda: val_iterator,
         output_signature=output_signature
     )
-    # val_dataset_unbatched = val_tf_dataset.unbatch()
+    val_dataset = val_dataset.unbatch()
 
     # One-hot encode the labels for training data on the features party.
     labels_dataset = train_tf_dataset.map(
