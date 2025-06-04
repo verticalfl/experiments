@@ -385,7 +385,7 @@ def main(_):
         trial = tuner.oracle.create_trial("single_run_trial")
 
         # Remove the cache path to ignore errors from previous runs.
-        dirpath = os.path.abspath("") + "/cache-mnist-post-scale"
+        dirpath = os.path.abspath("") + "/cache-mnist-postscale"
         if os.path.exists(dirpath):
             shutil.rmtree(dirpath)
 

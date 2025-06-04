@@ -40,7 +40,7 @@ flags.DEFINE_string(
 }}""",
     "Cluster spec",
 )
-flags.DEFINE_integer("backprop_cleartext_sz", 33, "Cleartext size for backpropagation")
+flags.DEFINE_integer("backprop_cleartext_sz", 24, "Cleartext size for backpropagation")
 flags.DEFINE_integer("backprop_scaling_factor", 32, "Scaling factor for backpropagation")
 flags.DEFINE_integer("backprop_noise_offset", 16, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
@@ -109,7 +109,7 @@ class HyperModel(kt.HyperModel):
         # autocontext).
         backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=20, max_value=34, step=1, default=FLAGS.backprop_cleartext_sz)
         backprop_scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
-        backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 14, 16, 32, 48], default=FLAGS.backprop_noise_offset)
+        backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 14, 16, 19, 32, 48], default=FLAGS.backprop_noise_offset)
 
         noise_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
         noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
@@ -397,7 +397,7 @@ def main(_):
         trial = tuner.oracle.create_trial("single_run_trial")
 
         # Remove the cache path to ignore errors from previous runs.
-        dirpath = os.path.abspath("") + "/cache-mnist-post-scale-binary"
+        dirpath = os.path.abspath("") + "/cache-mnist-postscale-binary"
         if os.path.exists(dirpath):
             shutil.rmtree(dirpath)
 
