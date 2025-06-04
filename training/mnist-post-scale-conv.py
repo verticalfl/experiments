@@ -349,7 +349,7 @@ def main(_):
             labels_party_dev=labels_party_dev,
             features_party_dev=features_party_dev,
             jacobian_devs=jacobian_dev,
-            cache_path="cache-mnist-post-scale-conv",
+            cache_path="cache-mnist-postscale-conv",
             num_examples=num_examples,
         )
 

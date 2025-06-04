@@ -46,10 +46,8 @@ flags.DEFINE_string(
 }}""",
     "Cluster spec",
 )
-flags.DEFINE_integer("backprop_cleartext_sz", 20, "Cleartext size for backpropagation")
-flags.DEFINE_integer(
-    "backprop_scaling_factor", 16, "Scaling factor for backpropagation"
-)
+flags.DEFINE_integer("backprop_cleartext_sz", 24, "Cleartext size for backpropagation")
+flags.DEFINE_integer("backprop_scaling_factor", 32, "Scaling factor for backpropagation")
 flags.DEFINE_integer("backprop_noise_offset", 8, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
@@ -362,7 +360,7 @@ def main(_):
             labels_party_dev=labels_party_dev,
             features_party_dev=features_party_dev,
             jacobian_devs=jacobian_dev,
-            cache_path="cache-imdb-post-scale",
+            cache_path="cache-imdb-postscale",
             vocab_size=vocab_size,
             num_examples=num_examples,
         )
@@ -437,7 +435,7 @@ def main(_):
         trial = tuner.oracle.create_trial("single_run_trial")
 
         # Remove the cache path to ignore errors from previous runs.
-        dirpath = os.path.abspath("") + "/cache-imdb-post-scale"
+        dirpath = os.path.abspath("") + "/cache-imdb-postscale"
         if os.path.exists(dirpath):
             shutil.rmtree(dirpath)
 
