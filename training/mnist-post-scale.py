@@ -42,10 +42,10 @@ flags.DEFINE_string(
 }}""",
     "Cluster spec",
 )
-flags.DEFINE_integer("backprop_cleartext_sz", 23, "Cleartext size for backpropagation")
-flags.DEFINE_integer("backprop_scaling_factor", 32, "Scaling factor for backpropagation")
-flags.DEFINE_integer("backprop_noise_offset", 14, "Noise offset for backpropagation")
-flags.DEFINE_integer("noise_cleartext_sz", 25, "Cleartext size for noise")
+flags.DEFINE_integer("backprop_cleartext_sz", 22, "Cleartext size for backpropagation")
+flags.DEFINE_integer("backprop_scaling_factor", 16, "Scaling factor for backpropagation")
+flags.DEFINE_integer("backprop_noise_offset", 16, "Noise offset for backpropagation")
+flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
 flags.DEFINE_bool("dp_sgd", False, "Run without encryption or masking (but with simple additive DP noise).")
@@ -118,7 +118,7 @@ class HyperModel(kt.HyperModel):
         noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
         # 0 and 40 correspond to ring degree of 2**12 and 2**13
 
-        clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=1.0)
+        clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=10.0)
 
         def backprop_context_fn(read_cache):
             if FLAGS.eager_mode:
