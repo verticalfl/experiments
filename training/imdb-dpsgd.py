@@ -46,9 +46,9 @@ flags.DEFINE_string(
 }}""",
     "Cluster spec",
 )
-flags.DEFINE_integer("backprop_cleartext_sz", 23, "Cleartext size for backpropagation")
+flags.DEFINE_integer("backprop_cleartext_sz", 27, "Cleartext size for backpropagation")
 flags.DEFINE_integer("backprop_scaling_factor", 32, "Scaling factor for backpropagation")
-flags.DEFINE_integer("backprop_noise_offset", 0, "Noise offset for backpropagation")
+flags.DEFINE_integer("backprop_noise_offset", 64, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 40, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
@@ -116,9 +116,9 @@ class HyperModel(kt.HyperModel):
         # encryption parameters. When executing eagerly, parameters must be
         # specified manually (or simply copied from a previous run which uses
         # autocontext).
-        backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=16, max_value=24, step=1, default=FLAGS.backprop_cleartext_sz)
+        backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=16, max_value=28, step=1, default=FLAGS.backprop_cleartext_sz)
         backprop_scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
-        backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 32, 40], default=FLAGS.backprop_noise_offset)
+        backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 32, 48, 64], default=FLAGS.backprop_noise_offset)
 
         noise_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
         noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
