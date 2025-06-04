@@ -40,7 +40,7 @@ flags.DEFINE_string(
 }}""",
     "Cluster spec",
 )
-flags.DEFINE_integer("backprop_cleartext_sz", 28, "Cleartext size for backpropagation")
+flags.DEFINE_integer("backprop_cleartext_sz", 26, "Cleartext size for backpropagation")
 flags.DEFINE_integer("backprop_scaling_factor", 32, "Scaling factor for backpropagation")
 flags.DEFINE_integer("backprop_noise_offset", 16, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
