@@ -110,7 +110,7 @@ class HyperModel(kt.HyperModel):
         # encryption parameters. When executing eagerly, parameters must be
         # specified manually (or simply copied from a previous run which uses
         # autocontext).
-        backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=16, max_value=26, step=1, default=FLAGS.backprop_cleartext_sz)
+        backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=16, max_value=34, step=1, default=FLAGS.backprop_cleartext_sz)
         backprop_scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
         backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 16, 32, 48], default=FLAGS.backprop_noise_offset)
 
