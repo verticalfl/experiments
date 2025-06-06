@@ -46,9 +46,9 @@ flags.DEFINE_string(
 }}""",
     "Cluster spec",
 )
-flags.DEFINE_integer("backprop_cleartext_sz", 24, "Cleartext size for backpropagation")
+flags.DEFINE_integer("backprop_cleartext_sz", 28, "Cleartext size for backpropagation")
 flags.DEFINE_integer("backprop_scaling_factor", 32, "Scaling factor for backpropagation")
-flags.DEFINE_integer("backprop_noise_offset", 8, "Noise offset for backpropagation")
+flags.DEFINE_integer("backprop_noise_offset", 20, "Noise offset for backpropagation")
 flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
@@ -115,15 +115,15 @@ class HyperModel(kt.HyperModel):
         # encryption parameters. When executing eagerly, parameters must be
         # specified manually (or simply copied from a previous run which uses
         # autocontext).
-        backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=16, max_value=24, step=1, default=FLAGS.backprop_cleartext_sz)
+        backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=16, max_value=28, step=1, default=FLAGS.backprop_cleartext_sz)
         backprop_scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
-        backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 14, 32, 40], default=FLAGS.backprop_noise_offset)
+        backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 16, 20, 32, 40], default=FLAGS.backprop_noise_offset)
 
         noise_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
         noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
         # 0 and 40 correspond to ring degree of 2**12 and 2**13
 
-        clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=10.0)
+        clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=0.5)
 
         def backprop_context_fn(read_cache):
             if FLAGS.eager_mode:
