@@ -27,8 +27,8 @@ import keras_tuner as kt
 
 nltk.download("stopwords")
 
-flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
-flags.DEFINE_float("beta_1", 0.8, "Beta 1 for Adam optimizer")
+flags.DEFINE_float("learning_rate", 0.1, "Learning rate for training")
+flags.DEFINE_float("beta_1", 0.7, "Beta 1 for Adam optimizer")
 flags.DEFINE_float("epsilon", 1.0, "Differential privacy parameter")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
@@ -123,7 +123,7 @@ class HyperModel(kt.HyperModel):
         noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
         # 0 and 40 correspond to ring degree of 2**12 and 2**13
 
-        clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=0.5)
+        clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=1.0)
 
         def backprop_context_fn(read_cache):
             if FLAGS.eager_mode:
