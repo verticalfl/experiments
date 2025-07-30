@@ -168,44 +168,33 @@ class HyperModel(kt.HyperModel):
                 batch_size=batch_size,
             )
 
-        # Create the model. When using post scale, you can use either Shell*
-        # layers or standard Keras layers.
-        model = tf_shell_ml.PostScaleSequential(
-            layers=[
-                # Model from tensorflow-privacy tutorial. The first layer may
-                # be skipped and the model still has ~95% accuracy (plaintext,
-                # no input clipping).
-                # tf_shell_ml.Conv2D(
-                #     filters=16,
-                #     kernel_size=8,
-                #     strides=2,
-                #     padding="same",
-                #     activation=tf.nn.relu,
-                # ),
-                # tf_shell_ml.MaxPool2D(
-                #     pool_size=(2, 2),
-                #     strides=1,
-                # ),
-                keras.layers.Conv2D(
-                    filters=16,
-                    kernel_size=4,
-                    strides=2,
-                    activation=tf.nn.relu,
-                ),
-                keras.layers.MaxPool2D(
-                    pool_size=(2, 2),
-                    strides=1,
-                ),
-                keras.layers.Flatten(),
-                keras.layers.Dense(
-                    32,
-                    activation=tf.nn.relu,
-                ),
-                keras.layers.Dense(
-                    10,
-                    activation=tf.nn.softmax,
-                ),
-            ],
+        # Model from tensorflow-privacy tutorial. The first layer may be skipped
+        # and the model still has ~95% accuracy (plaintext, no input clipping).
+        input_shape = (28 - (2 * clip_by), 28 - (2 * clip_by), 1)
+        input_img = keras.layers.Input(shape=input_shape)
+        x = keras.layers.Conv2D(
+            filters=16,
+            kernel_size=4,
+            strides=2,
+            activation=tf.nn.relu,
+        )(input_img)
+        x = keras.layers.MaxPool2D(
+            pool_size=(2, 2),
+            strides=1,
+        )(x)
+        x = keras.layers.Flatten()(x)
+        x = keras.layers.Dense(
+            32,
+            activation=tf.nn.relu,
+        )(x)
+        x = keras.layers.Dense(
+            10,
+            activation=tf.nn.softmax,
+        )(x)
+
+        model = tf_shell_ml.PostScaleModel(
+            inputs=input_img,
+            outputs=x,
             backprop_context_fn=backprop_context_fn,
             noise_context_fn=noise_context_fn,
             noise_multiplier_fn=noise_multiplier_fn,
@@ -224,7 +213,7 @@ class HyperModel(kt.HyperModel):
             check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
 
-        model.build([None, 28 - (2 * clip_by), 28 - (2 * clip_by), 1])
+        model.build((None,) + input_shape)
         model.summary()
 
         # Learning rate warm up is good practice for large batch sizes.

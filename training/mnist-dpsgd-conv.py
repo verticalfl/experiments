@@ -169,35 +169,34 @@ class HyperModel(kt.HyperModel):
                 batch_size=batch_size,
             )
 
+        input_shape = (28 - (2 * clip_by), 28 - (2 * clip_by), 1)
+        input_img = keras.layers.Input(shape=input_shape)
+        x = tf_shell_ml.Conv2D(
+            filters=16,
+            kernel_size=4,
+            activation=tf.nn.relu,
+            activation_deriv=tf_shell_ml.relu_deriv,
+        )(input_img)
+        x = tf_shell_ml.MaxPool2D(
+            pool_size=(2, 2),
+            strides=1,
+        )(x)
+        x = tf_shell_ml.Flatten()(x)
+        x = tf_shell_ml.Dense(
+            32,
+            activation=tf.nn.relu,
+            activation_deriv=tf_shell_ml.relu_deriv,  # Note: tf-shell specific
+        )(x)
+        x = tf_shell_ml.Dense(
+            10,
+            activation=tf.nn.softmax,
+        )(x)
+
         # Create the model. When using DPSGD, you must use Shell* layers. Note
         # this takes roughly an hour per batch!
-        model = tf_shell_ml.DpSgdSequential(
-            layers=[
-                # Model from tensorflow-privacy tutorial. The first 2 layers may
-                # be skipped and the model still has ~95% accuracy (plaintext,
-                # no noise).
-                tf_shell_ml.Conv2D(
-                    filters=16,
-                    kernel_size=4,
-                    strides=2,
-                    activation=tf_shell_ml.relu,
-                    activation_deriv=tf_shell_ml.relu_deriv,  # Note: tf-shell specific
-                ),
-                tf_shell_ml.MaxPool2D(
-                    pool_size=(2, 2),
-                    strides=1,
-                ),
-                tf_shell_ml.Flatten(),
-                tf_shell_ml.ShellDense(
-                    32,
-                    activation=tf_shell_ml.relu,
-                    activation_deriv=tf_shell_ml.relu_deriv,  # Note: tf-shell specific
-                ),
-                tf_shell_ml.ShellDense(
-                    10,
-                    activation=tf.nn.softmax,
-                ),
-            ],
+        model = tf_shell_ml.DpSgdModel(
+            inputs=input_img,
+            outputs=x,
             backprop_context_fn=backprop_context_fn,
             noise_context_fn=noise_context_fn,
             noise_multiplier_fn=noise_multiplier_fn,
@@ -212,7 +211,7 @@ class HyperModel(kt.HyperModel):
             check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
 
-        model.build([None, 28 - (2 * clip_by), 28 - (2 * clip_by), 1])
+        model.build((None,) + input_shape)
         model.summary()
 
         # Learning rate warm up is good practice for large batch sizes.

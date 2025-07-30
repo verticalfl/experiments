@@ -176,21 +176,24 @@ class HyperModel(kt.HyperModel):
 
         # Create the model.
         embedding_dim = hp.Choice("embedding_dim", values=[16, 32], default=16)
-        model = tf_shell_ml.DpSgdSequential(
-            layers=[
-                tf_shell_ml.ShellEmbedding(
-                    self.vocab_size + 1,  # +1 for OOV token.
-                    embedding_dim,
-                    skip_embeddings_below_index=50,  # Skip the most common words.
-                ),
-                # tf_shell_ml.ShellDropout(0.5),
-                tf_shell_ml.GlobalAveragePooling1D(),
-                tf_shell_ml.ShellDropout(0.5),
-                tf_shell_ml.ShellDense(
-                    2,
-                    activation=tf.nn.softmax,
-                ),
-            ],
+        input_shape = (sentence_length,)
+        input_layer = tf.keras.layers.Input(shape=input_shape)
+        x = tf_shell_ml.ShellEmbedding(
+            self.vocab_size + 1,  # +1 for OOV token.
+            embedding_dim,
+            skip_embeddings_below_index=50,  # Skip the most common words.
+        )(input_layer)
+        # x = tf_shell_ml.ShellDropout(0.5)(x)
+        x = tf.keras.layers.GlobalAveragePooling1D()(x)
+        x = tf_shell_ml.ShellDropout(0.5)(x)
+        x = tf_shell_ml.ShellDense(
+            2,
+            activation=tf.nn.softmax,
+        )(x)
+
+        model = tf_shell_ml.DpSgdModel(
+            inputs=input_layer,
+            outputs=x,
             backprop_context_fn=backprop_context_fn,
             noise_context_fn=noise_context_fn,
             noise_multiplier_fn=noise_multiplier_fn,
@@ -204,7 +207,7 @@ class HyperModel(kt.HyperModel):
             clip_threshold=clip_threshold,
             check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
-        model.build(input_shape=(None, sentence_length))
+        model.build((None,) + input_shape)
         model.summary()
 
         # Learning rate warm up is good practice for large batch sizes.

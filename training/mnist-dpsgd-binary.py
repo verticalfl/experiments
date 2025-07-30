@@ -170,19 +170,15 @@ class HyperModel(kt.HyperModel):
                 batch_size=batch_size,
             )
 
+        input_shape = (784,)
+        input_img = keras.layers.Input(shape=input_shape)
+        x = tf_shell_ml.Dense(100, activation=tf.nn.relu, activation_deriv=tf_shell_ml.relu_deriv)(input_img)
+        x = tf_shell_ml.Dense(2, activation=tf.nn.softmax)(x)
+
         # Create the model. When using DPSGD, you must use Shell* layers.
-        model = tf_shell_ml.DpSgdSequential(
-            layers=[
-                tf_shell_ml.ShellDense(
-                    100,
-                    activation=tf_shell_ml.relu,
-                    activation_deriv=tf_shell_ml.relu_deriv,
-                ),
-                tf_shell_ml.ShellDense(
-                    2,
-                    activation=tf.nn.softmax,
-                ),
-            ],
+        model = tf_shell_ml.DpSgdModel(
+            inputs=input_img,
+            outputs=x,
             backprop_context_fn=backprop_context_fn,
             noise_context_fn=noise_context_fn,
             noise_multiplier_fn=noise_multiplier_fn,
@@ -197,7 +193,7 @@ class HyperModel(kt.HyperModel):
             check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
 
-        model.build(input_shape=(None, 784))
+        model.build((None,) + input_shape)
         model.summary()
 
         # Learning rate warm up is good practice for large batch sizes.

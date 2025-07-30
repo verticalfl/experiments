@@ -173,25 +173,28 @@ class HyperModel(kt.HyperModel):
                 batch_size=batch_size,
             )
 
+        embedding_dim = hp.Choice("embedding_dim", values=[16, 32], default=16)
+        input_shape = (sentence_length,)
+        input_layer = keras.layers.Input(shape=input_shape)
+        x = tf.keras.layers.Embedding(
+            self.vocab_size + 1,  # +1 for OOV token.
+            embedding_dim,
+        )(input_layer)
+        # x = tf.keras.layers.Dropout(0.5)(x)
+        x = tf.keras.layers.GlobalAveragePooling1D()(x)
+        x = tf.keras.layers.Dropout(0.5)(x)
+        x = tf.keras.layers.Dense(
+            2,
+            activation=tf.nn.softmax,
+        )(x)
+
         # Create the model.
         # vectorization layer input: [batch_size, string (variable length)]
         # embedding layer input: [batch_size, int token number (sentence_length)]
         # pooling layer input: [batch_size, sentence_length, embedding (embedding_dim)]
-        embedding_dim = hp.Choice("embedding_dim", values=[16, 32], default=16)
-        model = tf_shell_ml.PostScaleSequential(
-            layers=[
-                tf.keras.layers.Embedding(
-                    self.vocab_size + 1,  # +1 for OOV token.
-                    embedding_dim,
-                ),
-                # tf.keras.layers.Dropout(0.5),
-                tf.keras.layers.GlobalAveragePooling1D(),
-                tf.keras.layers.Dropout(0.5),
-                tf.keras.layers.Dense(
-                    2,
-                    activation=tf.nn.softmax,
-                ),
-            ],
+        model = tf_shell_ml.PostScaleModel(
+            inputs=input_layer,
+            outputs=x,
             backprop_context_fn=backprop_context_fn,
             noise_context_fn=noise_context_fn,
             noise_multiplier_fn=noise_multiplier_fn,
@@ -205,7 +208,7 @@ class HyperModel(kt.HyperModel):
             clip_threshold=clip_threshold,
             check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
         )
-        model.build(input_shape=(None, sentence_length))
+        model.build((None,) + input_shape)
         model.summary()
 
         # Learning rate warm up is good practice for large batch sizes.

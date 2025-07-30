@@ -168,13 +168,16 @@ class HyperModel(kt.HyperModel):
                 batch_size=batch_size,
             )
 
-        # Create the model. When using post scale, you can use either Shell*
-        # layers or standard Keras layers.
-        model = tf_shell_ml.PostScaleSequential(
-            layers=[
-                keras.layers.Dense(100, activation=tf.nn.relu),
-                keras.layers.Dense(10, activation=tf.nn.softmax),
-            ],
+        # Define the model architecture.
+        input_shape = (784,)
+        input_img = keras.layers.Input(shape=input_shape)
+        x = keras.layers.Dense(100, activation="relu")(input_img)
+        x = keras.layers.Dense(10, activation="softmax")(x)
+
+        # Create the model.
+        model = tf_shell_ml.PostScaleModel(
+            inputs=input_img,
+            outputs=x,
             backprop_context_fn=backprop_context_fn,
             noise_context_fn=noise_context_fn,
             noise_multiplier_fn=noise_multiplier_fn,
@@ -205,6 +208,8 @@ class HyperModel(kt.HyperModel):
         )
 
         beta_1 = hp.Choice("beta_1", values=[0.7, 0.8, 0.9], default=FLAGS.beta_1)
+
+        model.build((None,) + input_shape)
         model.compile(
             loss=tf.keras.losses.CategoricalCrossentropy(),
             optimizer=tf.keras.optimizers.Adam(lr_schedule, beta_1=beta_1),

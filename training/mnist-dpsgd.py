@@ -166,19 +166,14 @@ class HyperModel(kt.HyperModel):
                 batch_size=batch_size,
             )
 
-        # Create the model. When using DPSGD, you must use Shell* layers.
-        model = tf_shell_ml.DpSgdSequential(
-            layers=[
-                tf_shell_ml.ShellDense(
-                    100,
-                    activation=tf_shell_ml.relu,
-                    activation_deriv=tf_shell_ml.relu_deriv,
-                ),
-                tf_shell_ml.ShellDense(
-                    10,
-                    activation=tf.nn.softmax,
-                ),
-            ],
+        input_shape = (784,)
+        input_img = keras.layers.Input(shape=input_shape)
+        x = tf_shell_ml.Dense(100, activation=tf.nn.relu, activation_deriv=tf_shell_ml.relu_deriv)(input_img)
+        x = tf_shell_ml.Dense(10, activation=tf.nn.softmax)(x)
+
+        model = tf_shell_ml.DpSgdModel(
+            inputs=input_img,
+            outputs=x,
             backprop_context_fn=backprop_context_fn,
             noise_context_fn=noise_context_fn,
             noise_multiplier_fn=noise_multiplier_fn,
@@ -209,6 +204,7 @@ class HyperModel(kt.HyperModel):
         )
 
         beta_1 = hp.Choice("beta_1", values=[0.7, 0.8, 0.9], default=FLAGS.beta_1)
+        model.build((None,) + input_shape)
         model.compile(
             loss=tf.keras.losses.CategoricalCrossentropy(),
             optimizer=tf.keras.optimizers.Adam(lr_schedule, beta_1=beta_1),
