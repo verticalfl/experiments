@@ -31,7 +31,7 @@ from experiment_utils import (
 )
 from noise_multiplier_finder import search_noise_multiplier
 
-flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
+flags.DEFINE_float("learning_rate", 0.001, "Learning rate for training")
 flags.DEFINE_float("beta_1", 0.8, "Beta 1 for Adam optimizer")
 flags.DEFINE_float("epsilon", 1.0, "Differential privacy parameter")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
@@ -302,11 +302,12 @@ class HyperModel(kt.HyperModel):
 
         # Create the model.
         input_shape = (224, 224, 3)
-        inputs, outputs = test_models.SqueezeNet(2, 0.0001, inputs=input_shape)
+        inputs, outputs = SqueezeNet(2, 0.0001, inputs=input_shape)
 
         model = tf_shell_ml.PostScaleModel(
             inputs=inputs,
             outputs=outputs,
+            ubatch_per_batch=32,
             backprop_context_fn=backprop_context_fn,
             noise_context_fn=noise_context_fn,
             noise_multiplier_fn=noise_multiplier_fn,
@@ -400,7 +401,7 @@ def main(_):
 
     # Defining data generator with Data Augmentation
     data_gen_augmented = ImageDataGenerator(rescale = 1/255., 
-                                            validation_split = 0.2,
+                                            validation_split = 0.18,
                                             zoom_range = 0.2,
                                             horizontal_flip= True,
                                             rotation_range = 20,
@@ -418,7 +419,7 @@ def main(_):
 
     # Testing Augmented Data
     # Defining Validation_generator withour Data Augmentation
-    data_gen = ImageDataGenerator(rescale = 1/255., validation_split = 0.2)
+    data_gen = ImageDataGenerator(rescale = 1/255., validation_split = 0.18)
 
     print('Unchanged Validation Images:')
     val_iterator = data_gen.flow_from_directory(data_dir, 
@@ -461,6 +462,8 @@ def main(_):
     ).batch(2**12)
 
     features_dataset = train_tf_dataset.map(lambda x, y: x).batch(2**12)
+
+    val_dataset = val_dataset.map(lambda x, y: (x, tf.one_hot(tf.cast(y, tf.int32), 2))).batch(64)
 
     target_delta = 10**int(math.floor(math.log10(1 / num_examples)))
     print("Target delta:", target_delta)
@@ -515,8 +518,10 @@ def main(_):
         tuner.search(
             features_dataset,
             labels_dataset,
+            steps_per_epoch=num_examples // 2**12,
             epochs=FLAGS.epochs,
             validation_data=val_dataset,
+            validation_steps=100,
             callbacks=[tb, stop_early],
         )
         tuner.results_summary()
@@ -554,8 +559,10 @@ def main(_):
             trial,
             features_dataset,
             labels_dataset,
+            steps_per_epoch=num_examples // 2**12,
             epochs=FLAGS.epochs,
             validation_data=val_dataset,
+            validation_steps=100,
             callbacks=[tb, stop_early],
         )
 
