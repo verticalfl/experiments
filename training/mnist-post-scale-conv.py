@@ -40,10 +40,10 @@ flags.DEFINE_string(
 }}""",
     "Cluster spec",
 )
-flags.DEFINE_integer("backprop_cleartext_sz", 33, "Cleartext size for backpropagation")
+flags.DEFINE_integer("backprop_cleartext_sz", 33, "Cleartext size for backpropagation")  # 22?
 flags.DEFINE_integer("backprop_scaling_factor", 16, "Scaling factor for backpropagation")
 flags.DEFINE_integer("backprop_noise_offset", 16, "Noise offset for backpropagation")
-flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
+flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise") # 34?
 flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
 flags.DEFINE_bool("dp_sgd", False, "Run without encryption or masking (but with simple additive DP noise).")

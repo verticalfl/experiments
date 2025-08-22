@@ -2,7 +2,7 @@
 # dataset from https://www.kaggle.com/datasets/salader/dogs-vs-cats/data
 # unzip the dataset to the current directory
 # mkdir -p cats-and-dogs && unzip -q ../cats-and-dogs.zip -d cats-and-dogs
-name="dog-cat-post-scale-conv"
+name="dog-cat-tf"
 import time
 from datetime import datetime
 import tensorflow as tf
@@ -13,8 +13,6 @@ import keras
 from keras.layers import Dense, Conv2D, MaxPool2D , Flatten
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import numpy as np
-import tf_shell
-import tf_shell_ml
 import os
 import json
 import hashlib
@@ -31,33 +29,28 @@ from experiment_utils import (
 )
 from noise_multiplier_finder import search_noise_multiplier
 
+# Dataset from
+# Jeremy Elson, John R. Douceur, Jon Howell, Jared Saul, Asirra: A CAPTCHA that Exploits Interest-Aligned Manual Image Categorization, in Proceedings of 14th ACM Conference on Computer and Communications Security (CCS), Association for Computing Machinery, Inc., Oct. 2007
+
+# Hyperparam suggestions:
+# https://github.com/chasingbob/squeezenet-keras gets 80% accuracy
+# https://github.com/nlml/cats-vs-dogs-classifier-pruned-and-served gets 98% accuracy with l1 reg and pruning, looks like 303 epochs total.
+# https://florianbordes.wordpress.com/2016/04/04/cats-vs-dogs-9-squeezenet/ gets 87% after 100k epochs!
+# https://obilaniu6266h16.wordpress.com/2016/03/28/first-success-15-42-validation-error-the-benefits-of-cps/
+# https://www.researchgate.net/profile/Thomas-Unterthiner/publication/309935608_Speeding_up_Semantic_Segmentation_for_Autonomous_Driving/links/58524adf08ae7d33e01a58a7/Speeding-up-Semantic-Segmentation-for-Autonomous-Driving.pdf
+#   Note this paper says training took 22 hours on 2 GPUs, with some weights pre-initialized!
+
 flags.DEFINE_float("learning_rate", 1e-3, "Learning rate for training")
 flags.DEFINE_float("beta_1", 0.9, "Beta 1 for Adam optimizer")
-flags.DEFINE_float("epsilon", 1.0, "Differential privacy parameter")
+flags.DEFINE_float("decay_rate", 1.0, "Learning rate decay.")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
-flags.DEFINE_enum(
-    "party", "b", ["f", "l", "b"], "Which party is this, `f` `l`, or `b`, for feature, label, or both."
-)
-flags.DEFINE_bool("gpu", False, "Offload jacobain computation to GPU on features party")
-flags.DEFINE_string(
-    "cluster_spec",
-    f"""{{
-  "{features_party_job}": ["localhost:2222"],
-  "{labels_party_job}": ["localhost:2223"],
-}}""",
-    "Cluster spec",
-)
-flags.DEFINE_integer("backprop_cleartext_sz", 33, "Cleartext size for backpropagation")
-flags.DEFINE_integer("backprop_scaling_factor", 16, "Scaling factor for backpropagation")
-flags.DEFINE_integer("backprop_noise_offset", 14, "Noise offset for backpropagation")
-flags.DEFINE_integer("noise_cleartext_sz", 36, "Cleartext size for noise")
-flags.DEFINE_integer("noise_noise_offset", 0, "Noise offset for noise")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
-flags.DEFINE_bool("dp_sgd", False, "Run without encryption or masking (but with simple additive DP noise).")
-flags.DEFINE_bool("rand_resp", False, "Run without encryption or masking, flipping the labels according to randomized response.")
-flags.DEFINE_bool("check_overflow", False, "Check for overflow in the protocol.")
 flags.DEFINE_bool("tune", False, "Tune hyperparameters (or use default values).")
 FLAGS = flags.FLAGS
+
+# Clip the input images to make testing faster.
+clip_by = 0
+tf.random.set_seed(7)
 
 # from keras.models import Model
 from keras.layers import Input, Activation, Concatenate
@@ -358,24 +351,14 @@ def SqueezeNetv1_1(num_classes, weight_decay_l2=0.0001, inputs=(128, 128, 3), re
     return input_img, softmax
 
 
-
 class HyperModel(kt.HyperModel):
-    def __init__(self, labels_party_dev, features_party_dev, jacobian_devs, cache_path, num_examples):
-        super().__init__()
-        self.labels_party_dev = labels_party_dev
-        self.features_party_dev = features_party_dev
-        self.jacobian_devs = jacobian_devs
+    def __init__(self, cache_path):
+        super().__init__(cache_path)
         self.cache_path = cache_path
-        self.num_examples = num_examples
-        self.strategy = tf.distribute.MirroredStrategy(devices=self.jacobian_devs)
 
     def hp_hash(self, hp_dict):
         """Returns a stable short hash for a dictionary of hyperparameter values."""
         # Convert dict to canonical JSON string and hash it
-        hp_dict["epsilon"] = FLAGS.epsilon
-        hp_dict["eager_mode"] = FLAGS.eager_mode
-        hp_dict["dp-sgd"] = FLAGS.dp_sgd
-        hp_dict["rand_resp"] = FLAGS.rand_resp
         data = json.dumps(hp_dict, sort_keys=True)
         return hashlib.md5(data.encode("utf-8")).hexdigest()[:8]
 
@@ -409,360 +392,139 @@ class HyperModel(kt.HyperModel):
         return super().fit(hp, model, *args, **kwargs)
 
     def build(self, hp):
-        # Build the model on the feature holding party's CPU (vs GPU) to ensure
-        # each GPU can process in parallel.
-        with self.strategy.scope():
-            # Define functions which generate encryption context for the
-            # backpropagation and noise parts of the protocol. When not executing
-            # eagerly, autocontext can be used to automatically determine the
-            # encryption parameters. When executing eagerly, parameters must be
-            # specified manually (or simply copied from a previous run which uses
-            # autocontext).
-            backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=20, max_value=34, step=1, default=FLAGS.backprop_cleartext_sz)
-            backprop_scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
-            backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 14, 16, 32, 48], default=FLAGS.backprop_noise_offset)
+        # Create the model.
+        input_shape = (224, 224, 3)
+        weight_decay = hp.Choice("weight_decay", values=[0.0, 1e-5, 1e-4, 5e-4, 1e-3], default=0.)
+        inputs, outputs = SqueezeNet(2, weight_decay, inputs=input_shape)
 
-            noise_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
-            noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
-            # 0 and 40 correspond to ring degree of 2**12 and 2**13
+        model = keras.Model(
+            inputs=inputs,
+            outputs=outputs,
+        )
 
-            clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=1.0)
-            weight_decay = hp.Choice("weight_decay", values=[0.0, 1e-5, 1e-4, 5e-4, 1e-3], default=0.)
+        model.build((None,) + input_shape)
+        model.summary()
 
-            def backprop_context_fn(read_cache):
-                if FLAGS.eager_mode:
-                    return tf_shell.create_context64(
-                        log_n=12,
-                        main_moduli=[1688880462102529, 2181470596882433],
-                        plaintext_modulus=8590090241,
-                        scaling_factor=FLAGS.backprop_scaling_factor,
-                    )
-                else:
-                    return tf_shell.create_autocontext64(
-                        log2_cleartext_sz=backprop_cleartext_sz,
-                        scaling_factor=backprop_scaling_factor,
-                        noise_offset_log2=backprop_noise_offset,
-                        read_from_cache=read_cache,
-                        cache_path=self.cache_path,
-                    )
+        # Learning rate warm up is good practice for large batch sizes.
+        # see https://arxiv.org/pdf/1706.02677
+        # lr = hp.Choice("learning_rate", values=[0.01, 0.001, 0.0005, 0.0001, 0.00005, 0.00001], default=FLAGS.learning_rate)
+        # # decay_rate = hp.Choice("decay_rate", values=[0.9, 0.95, 0.98, 1.0], default=FLAGS.decay_rate)
+        # lr_schedule = LRWarmUp(
+        #     initial_learning_rate=lr,
+        #     decay_schedule_fn=tf.keras.optimizers.schedules.ExponentialDecay(
+        #         lr,
+        #         # decay_steps=160 * 2, # every 2 epochs
+        #         # decay_rate=decay_rate,
+        #         decay_steps=1,
+        #         decay_rate=1.0,
+        #     ),
+        #     warmup_steps=16*5, # paper above uses 5 epcohs
+        #     warmup_steps=160,
+        # )
 
-            def noise_context_fn (read_cache):
-                if FLAGS.eager_mode:
-                    return tf_shell.create_context64(
-                        log_n=12,
-                        main_moduli=[6192450225922049, 16325550595612673],
-                        plaintext_modulus=68719484929,
-                    )
-                else:
-                    return tf_shell.create_autocontext64(
-                        log2_cleartext_sz=noise_cleartext_sz,
-                        noise_offset_log2=noise_noise_offset,
-                        read_from_cache=read_cache,
-                        cache_path=self.cache_path,
-                    )
+        beta_1 = hp.Choice("beta_1", values=[0.7, 0.8, 0.9, 0.95, 0.99], default=FLAGS.beta_1)
+        model.compile(
+            loss=tf.keras.losses.CategoricalCrossentropy(),
+            # optimizer=tf.keras.optimizers.Adam(lr_schedule, beta_1=beta_1),
+            optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate, beta_1=beta_1),
+            metrics=[tf.keras.metrics.CategoricalAccuracy()],
+        )
 
-            def noise_multiplier_fn(batch_size):
-                # If doing randomized response, we don't need to compute the noise
-                # multiplier. Return 0 to disable noise.
-                if FLAGS.rand_resp:
-                    return 0.0
-                # Set delta to 1/num_examples, rounded to nearest power of 10.
-                target_delta = 10**int(math.floor(math.log10(1 / self.num_examples)))
-                print(f"Target delta {target_delta}")
-                return search_noise_multiplier(
-                    target_epsilon=FLAGS.epsilon,
-                    target_delta=target_delta,
-                    epochs=FLAGS.epochs,
-                    training_num_samples=self.num_examples,
-                    batch_size=batch_size,
-                )
-
-            # Create the model.
-            input_shape = (224, 224, 3)
-            residual = hp.Choice("residual", values=[True, False], default=False)
-            model_arch_str = hp.Choice("model_arch", values=["SqueezeNetSmall", "SqueezeNet", "SqueezeNetv1_1"], default="SqueezeNet")
-
-            def getModelClass(string):
-                if string == "SqueezeNetSmall":
-                    return SqueezeNetSmall # Trainable params: 256,818 (1003.20 KB)
-                elif string == "SqueezeNet":
-                    return SqueezeNet  # Trainable params: 653,762 (2.49 MB)
-                elif string == "SqueezeNetv1_1":
-                    return SqueezeNetv1_1  # Trainable params: 723,522 (2.76 MB)
-
-            model_arch = getModelClass(model_arch_str)
-            inputs, outputs = model_arch(2, weight_decay, inputs=input_shape, residual=residual)
-
-            model = tf_shell_ml.PostScaleModel(
-                inputs=inputs,
-                outputs=outputs,
-                ubatch_per_batch=2**4,
-                backprop_context_fn=backprop_context_fn,
-                noise_context_fn=noise_context_fn,
-                noise_multiplier_fn=noise_multiplier_fn,
-                labels_party_dev=self.labels_party_dev,
-                features_party_dev=self.features_party_dev,
-                cache_path=self.cache_path,
-                jacobian_devices=self.jacobian_devs,
-                disable_he_backprop_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
-                disable_masking_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
-                simple_noise_INSECURE= FLAGS.dp_sgd or FLAGS.rand_resp,
-                clip_threshold=clip_threshold,
-                check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
-                jacobian_strategy=self.strategy,
-            )
-
-            model.build((None,) + input_shape)
-            model.summary()
-
-            # Learning rate warm up is good practice for large batch sizes.
-            # see https://arxiv.org/pdf/1706.02677
-            lr = hp.Choice("learning_rate", values=[1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 1e-6], default=FLAGS.learning_rate)
-            # warmup_steps = hp.Choice("warmup_steps", values=[0, 2, 4], default=0)
-            # decay_rate = hp.Choice("decay_rate", values=[0.95, 0.97, 0.99, 1.0], default=0.97)
-            # lr_schedule = LRWarmUp(
-            #     initial_learning_rate=lr,
-            #     decay_schedule_fn=tf.keras.optimizers.schedules.ExponentialDecay(
-            #         lr,
-            #         decay_steps=1,
-            #         decay_rate=decay_rate,
-            #     ),
-            #     warmup_steps=4,
-            # )
-            # clipnorm = hp.Choice("clipnorm", values=[0.5, 1.0, 2.0, 5.0], default=1.0)
-
-            beta_1 = hp.Choice("beta_1", values=[0.0, 0.5, 0.7, 0.8, 0.9, 0.95], default=FLAGS.beta_1)
-        
-            model.compile(
-                loss=tf.keras.losses.CategoricalCrossentropy(),
-                #optimizer=tf.keras.optimizers.Adam(
-                #    learning_rate=lr_schedule, 
-                #    beta_1=beta_1, 
-                #    # clipnorm=clipnorm
-                #),
-                optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate, beta_1=beta_1),
-                metrics=[tf.keras.metrics.CategoricalAccuracy()],
-            )
-
-            return model
+        return model
 
 def main(_):
-    # Allow killing server with control-c
-    def signal_handler(sig, frame):
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
-
-    if FLAGS.party == "b":
-        # Override the features and labels party devices.
-        labels_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
-        features_party_dev="/job:localhost/replica:0/task:0/device:CPU:0"
-        jacobian_dev = None
-        if FLAGS.gpu:
-            num_gpus = len(tf.config.list_physical_devices('GPU'))
-            jacobian_dev = [f"/job:localhost/replica:0/task:0/device:GPU:{i}" for i in range(num_gpus)]
-
-            # gpus = tf.config.list_physical_devices('GPU')
-            # tf.config.set_logical_device_configuration(
-            #     gpus[0],
-            #     [
-            #         tf.config.LogicalDeviceConfiguration(memory_limit=1024*1),
-            #         tf.config.LogicalDeviceConfiguration(memory_limit=1024*1),
-            #         tf.config.LogicalDeviceConfiguration(memory_limit=1024*1),
-            #         tf.config.LogicalDeviceConfiguration(memory_limit=1024*1),
-            #         tf.config.LogicalDeviceConfiguration(memory_limit=1024*1),
-            #         tf.config.LogicalDeviceConfiguration(memory_limit=1024*1),
-            #         tf.config.LogicalDeviceConfiguration(memory_limit=1024*1),
-            #         tf.config.LogicalDeviceConfiguration(memory_limit=1024*1),
-            #     ]
-            # )
-            # logical_gpus = tf.config.list_logical_devices('GPU')
-            # print(logical_gpus)
-            # jacobian_dev = [f"/job:localhost/replica:0/task:0/device:GPU:{i}" for i in range(8)]
-
-
-    else:
-        # Set up the distributed training environment.
-        features_party_dev = f"/job:{features_party_job}/replica:0/task:0/device:CPU:0"
-        labels_party_dev = f"/job:{labels_party_job}/replica:0/task:0/device:CPU:0"
-        jacobian_dev = None
-        if FLAGS.gpu:
-            num_gpus = len(tf.config.list_physical_devices('GPU'))
-            jacobian_dev = [f"/job:{features_party_job}/replica:0/task:0/device:GPU:{i}" for i in range(num_gpus)]
-
-        if FLAGS.party == "f":
-            this_job = features_party_job
-        else:
-            this_job = labels_party_job
-
-        print(FLAGS.cluster_spec)
-
-        cluster = tf.train.ClusterSpec(eval(FLAGS.cluster_spec))
-
-        server = tf.distribute.Server(
-            cluster,
-            job_name=this_job,
-            task_index=0,
-        )
-
-        tf.config.experimental_connect_to_cluster(cluster)
-
-        # The labels party just runs the server while the training is driven by the
-        # features party.
-        if this_job == labels_party_job:
-            print(f"{this_job} server started.", flush=True)
-            server.join()  # Wait for the features party to finish.
-            exit(0)
-
     # Set up training data.
     data_dir = 'cats-and-dogs/dogs_vs_cats'
-    # Set a smaller batch size for testing
-    bs = 2**6
+    bs = 2**10  # Note this is smaller than PostScale protocol uses (2**12)
     val_bs = 2**7
 
-    # Next create the training and validation datasets on the feature holding
-    # party. Note the validation dataset has both features and labels.
-    with tf.device(features_party_dev):
-        # Defining data generator with Data Augmentation
-        data_gen_augmented = ImageDataGenerator(rescale = 1/255., 
-                                                validation_split = 0.18)
-                                                # zoom_range = 0.2,
-                                                # horizontal_flip= True,
-                                                # rotation_range = 20,
-                                                # width_shift_range=0.2,
-                                                # height_shift_range=0.2)
-        train_iterator = data_gen_augmented.flow_from_directory(data_dir, 
-                                                        target_size = (224, 224), 
-                                                        batch_size = bs,
-                                                        subset = 'training',
-                                                        class_mode = 'categorical',
-                                                        )
+    # Defining data generator with Data Augmentation
+    data_gen_augmented = ImageDataGenerator(rescale = 1/255., 
+                                            validation_split = 0.18,
+                                            # zoom_range = 0.2,
+                                            # horizontal_flip= True,
+                                            # rotation_range = 20,
+                                            # width_shift_range=0.2,
+                                            # height_shift_range=0.2
+                                            )
+    print('Augmented training Images:')
+    train_iterator = data_gen_augmented.flow_from_directory(data_dir, 
+                                                      target_size = (224, 224), 
+                                                      batch_size = bs,
+                                                      subset = 'training',
+                                                      class_mode = 'categorical',
+                                                      shuffle = True,
+                                                      )
 
-        data_gen = ImageDataGenerator(rescale = 1/255., validation_split = 0.18)
-        print('Unchanged validation images:')
-        val_iterator = data_gen.flow_from_directory(data_dir, 
-                                                target_size = (224, 224), 
-                                                batch_size = val_bs,
-                                                subset = 'validation',
-                                                class_mode = 'categorical',
-                                                )
-        num_val_examples = val_iterator.samples
+    num_examples = train_iterator.samples
+    print("Number of training examples:", num_examples)
 
+    # Testing Augmented Data
+    # Defining Validation_generator withour Data Augmentation
+    data_gen = ImageDataGenerator(rescale = 1/255., validation_split = 0.18)
 
-        # Create tf.data.Dataset from the training iterator. The lambda ensures
-        # the iterator is obtained fresh if from_generator is called multiple
-        # times or if the dataset is re-iterated in some contexts. Keras
-        # iterators are usually epoch-aware.
-        train_dataset = tf.data.Dataset.from_generator(
-            lambda: train_iterator,
-            output_signature=(
-                tf.TensorSpec(shape=(bs, 224, 224, 3), dtype=tf.float32),
-                tf.TensorSpec(shape=(bs, 2), dtype=tf.float32)
-            )
-        )
-        features_dataset = train_dataset.map(lambda f,l: f)
+    print('Unchanged Validation Images:')
+    val_iterator = data_gen.flow_from_directory(data_dir, 
+                                            target_size = (224, 224), 
+                                            batch_size = val_bs,
+                                            subset = 'validation',
+                                            class_mode = 'categorical')
+
+    # Define output signature for the generator
+    # The DirectoryIterator yields (batch_of_images, batch_of_labels)
+    # Images: (batch_size, height, width, channels), dtype=float32
+    # Labels: (batch_size, 2), dtype=float32
+    output_signature = (
+        tf.TensorSpec(shape=(None, 224, 224, 3), dtype=tf.float32),
+        tf.TensorSpec(shape=(None, 2), dtype=tf.float32)
+    )
+
+    # Create tf.data.Dataset from the training iterator
+    # The lambda ensures the iterator is obtained fresh if from_generator is called multiple times
+    # or if the dataset is re-iterated in some contexts. Keras iterators are usually epoch-aware.
+    train_dataset = tf.data.Dataset.from_generator(
+        lambda: train_iterator,
+        output_signature=output_signature
+    ).unbatch().batch(bs, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
     
-        val_dataset = tf.data.Dataset.from_generator(
-            lambda: val_iterator,
-            output_signature=(
-                tf.TensorSpec(shape=(val_bs, 224, 224, 3), dtype=tf.float32),
-                tf.TensorSpec(shape=(val_bs, 2), dtype=tf.float32)
-            )
-        )
-
-    # First create the training dataset which on the label holding party.
-    # This party does not have the features.
-    with tf.device(labels_party_dev):
-        # Defining data generator with Data Augmentation
-        data_gen_augmented = ImageDataGenerator(rescale = 1/255., 
-                                                validation_split = 0.18)
-                                                # zoom_range = 0.2,
-                                                # horizontal_flip= True,
-                                                # rotation_range = 20,
-                                                # width_shift_range=0.2,
-                                                # height_shift_range=0.2)
-        print('Augmented training images:')
-        train_iterator = data_gen_augmented.flow_from_directory(data_dir, 
-                                                          target_size = (224, 224), 
-                                                          batch_size = bs,
-                                                          subset = 'training',
-                                                          class_mode = 'categorical',
-                                                          )
-
-        num_examples = train_iterator.samples
-        print("Number of training examples:", num_examples)
-
-        # Create tf.data.Dataset from the training iterator
-        # The lambda ensures the iterator is obtained fresh if from_generator is
-        # called multiple times or if the dataset is re-iterated in some contexts.
-        # Keras iterators are usually epoch-aware.
-        train_dataset = tf.data.Dataset.from_generator(
-            lambda: train_iterator,
-            output_signature=(
-                tf.TensorSpec(shape=(bs, 224, 224, 3), dtype=tf.float32),
-                tf.TensorSpec(shape=(bs, 2), dtype=tf.float32)
-            )
-        )
-        labels_dataset = train_dataset.map(lambda f,l: l)
+    # Prepare validation dataset
+    val_dataset = tf.data.Dataset.from_generator(
+        lambda: val_iterator,
+        output_signature=output_signature
+    ).unbatch().batch(val_bs, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
 
     tf.config.run_functions_eagerly(FLAGS.eager_mode)
 
-    target_delta = 10**int(math.floor(math.log10(1 / num_examples)))
-    print("Target delta:", target_delta)
-
-    hypermodel = HyperModel(
-        labels_party_dev=labels_party_dev,
-        features_party_dev=features_party_dev,
-        jacobian_devs=jacobian_dev,
-        cache_path="cache-"+name,
-        num_examples=num_examples,
-    )
+    hypermodel = HyperModel(cache_path="cache-"+name)
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    logdir = os.path.abspath("") + f"/tflogs/dog-cat-post-scale-conv-{stamp}"
-    tb = TensorBoard(
+    logdir = os.path.abspath("") + f"/tflogs/dog-cat-tf-{stamp}"
+    tb = tf.keras.callbacks.TensorBoard(
         log_dir=logdir,
-        # ExperimentTensorBoard kwargs.
-        party=FLAGS.party,
-        gpu_enabled=FLAGS.gpu,
-        num_gpus=len(tf.config.list_physical_devices('GPU')),
-        cluster_spec=FLAGS.cluster_spec,
-        target_delta=target_delta,
-        training_num_samples=num_examples,
-        epochs=FLAGS.epochs,
-        # TensorBoard kwargs.
         write_steps_per_second=True,
         update_freq="batch",
-        profile_batch=2,
+        #profile_batch=2,
     )
 
     if FLAGS.tune:
-        # Enhanced early stopping with gradient monitoring
-        stop_early = tf.keras.callbacks.EarlyStopping(
-            monitor='val_categorical_accuracy', 
-            patience=8, 
-            min_delta=0.001, 
-            mode='max',
-            restore_best_weights=True
-        )
-
         # Tune the hyperparameters.
         tuner = kt.RandomSearch(
             hypermodel,
-            max_trials=80,
+            max_trials=60,
             objective=[
                 kt.Objective('val_categorical_accuracy', direction='max'),
-                # kt.Objective('time', direction='min')
             ],
             directory="kerastuner",
             project_name=name,
-            max_consecutive_failed_trials=50,
+            max_consecutive_failed_trials=30,
         )
         tuner.search_space_summary()
+
+        stop_early = tf.keras.callbacks.EarlyStopping(monitor="val_categorical_accuracy", patience=5, min_delta=0.001, mode='max')
+
         tuner.search(
-            features_dataset,
-            labels_dataset,
+            train_dataset,
             # steps_per_epoch=num_examples // bs,
             steps_per_epoch=10,  # shorten to just 10
             epochs=FLAGS.epochs,
@@ -787,7 +549,6 @@ def main(_):
             max_trials=1,
             objective=[
                 kt.Objective('val_categorical_accuracy', direction='max'),
-                # kt.Objective('time', direction='min')
             ],
             directory="kerastuner",
             project_name="default_hps",
@@ -803,21 +564,20 @@ def main(_):
 
         tuner.run_trial(
             trial,
-            features_dataset,
-            labels_dataset,
+            train_dataset,
             # steps_per_epoch=num_examples // bs,
             steps_per_epoch=10,  # shorten to just 10
             epochs=FLAGS.epochs,
             validation_data=val_dataset,
             validation_steps=num_val_examples // val_bs,
             callbacks=[tb],
+            # callbacks=[tb, lr_plateau], # where lr_plateau = keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=2, cooldown=0, verbose=1)
         )
 
     # # SIMPLE TRAIN
     # import time
 
     # epochs = 2
-    # train_dataset = train_dataset.map(lambda x, y: (x, y)).batch(bs)
 
     # # Create the model.
     # input_shape = (224, 224, 3)
@@ -830,13 +590,13 @@ def main(_):
     # model.build((None,) + input_shape)
     # model.summary()
     # lr_schedule = LRWarmUp(
-    #     initial_learning_rate=0.0001,
+    #     initial_learning_rate=FLAGS.learning_rate,
     #     decay_schedule_fn=tf.keras.optimizers.schedules.ExponentialDecay(
-    #         0.0001,
+    #         FLAGS.learning_rate,
     #         # decay_steps=16, # every 1 epoch
     #         decay_steps=32, # every 2 epochs
     #         # decay_steps=64, # every 4 epochs
-    #         decay_rate=.95,
+    #         decay_rate=FLAGS.decay_rate,
     #     ),
     #     # warmup_steps=16*5, # paper above uses 5 epcohs
     #     warmup_steps=4,
@@ -894,6 +654,7 @@ def main(_):
     #     val_acc_metric.reset_state()
     #     print("Validation acc: %.4f" % (float(val_acc),))
     #     print("Time taken: %.2fs" % (time.time() - start_time))
+
 
 if __name__ == "__main__":
     app.run(main)
