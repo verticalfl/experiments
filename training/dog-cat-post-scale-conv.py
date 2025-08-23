@@ -31,7 +31,7 @@ from experiment_utils import (
 )
 from noise_multiplier_finder import search_noise_multiplier
 
-flags.DEFINE_float("learning_rate", 1e-3, "Learning rate for training")
+flags.DEFINE_float("learning_rate", 1e-4, "Learning rate for training")
 flags.DEFINE_float("beta_1", 0.9, "Beta 1 for Adam optimizer")
 flags.DEFINE_float("epsilon", 1.0, "Differential privacy parameter")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
@@ -94,7 +94,7 @@ def fire_module(input_fire, s1, e1, e3, weight_decay_l2, fireID):
         name="fire" + str(fireID) + "_squeeze",
         data_format="channels_last",
     )(input_fire)
-    output_squeeze = BatchNormalization(name="fire" + str(fireID) + "_squeeze_bn")(output_squeeze)
+    # output_squeeze = BatchNormalization(name="fire" + str(fireID) + "_squeeze_bn")(output_squeeze)
     output_squeeze = Activation("relu", name="fire" + str(fireID) + "_squeeze_relu")(output_squeeze)
     
     # Expansion steps
@@ -108,7 +108,7 @@ def fire_module(input_fire, s1, e1, e3, weight_decay_l2, fireID):
         name="fire" + str(fireID) + "_expand1",
         data_format="channels_last",
     )(output_squeeze)
-    output_expand1 = BatchNormalization(name="fire" + str(fireID) + "_expand1_bn")(output_expand1)
+    # output_expand1 = BatchNormalization(name="fire" + str(fireID) + "_expand1_bn")(output_expand1)
     output_expand1 = Activation("relu", name="fire" + str(fireID) + "_expand1_relu")(output_expand1)
     
     output_expand2 = Convolution2D(
@@ -121,7 +121,7 @@ def fire_module(input_fire, s1, e1, e3, weight_decay_l2, fireID):
         name="fire" + str(fireID) + "_expand2",
         data_format="channels_last",
     )(output_squeeze)
-    output_expand2 = BatchNormalization(name="fire" + str(fireID) + "_expand2_bn")(output_expand2)
+    # output_expand2 = BatchNormalization(name="fire" + str(fireID) + "_expand2_bn")(output_expand2)
     output_expand2 = Activation("relu", name="fire" + str(fireID) + "_expand2_relu")(output_expand2)
     
     # Merge expanded activations
@@ -207,6 +207,84 @@ def SqueezeNetSmall(num_classes, weight_decay_l2=0.0001, inputs=(128, 128, 3), r
     return input_img, softmax
 
 
+def SqueezeNetMedium(num_classes, weight_decay_l2=0.0001, inputs=(128, 128, 3), residual=False):
+    """
+    A wrapper to build a medium version of the SqueezeNet Model.
+    Note the reduced number of filters in each fire module.
+
+    # Arguments
+        num_classes: number of classes defined for classification task
+        weight_decay_l2: weight decay for conv layers
+        inputs: input image dimensions
+        residual: whether to use residual connections
+
+    # Return
+        The input and output layer of the model
+    """
+    input_img = Input(shape=inputs)
+
+    conv1 = Convolution2D(
+        32,
+        (7, 7),
+        activation=None,
+        kernel_initializer="glorot_uniform",
+        # kernel_regularizer=regularizers.l2(weight_decay_l2),
+        strides=(2, 2),
+        padding="same",
+        name="conv1",
+        data_format="channels_last",
+    )(input_img)
+    # conv1 = BatchNormalization(name="conv1_bn")(conv1)
+    conv1 = Activation("relu", name="conv1_relu")(conv1)
+
+    maxpool1 = MaxPooling2D(
+        pool_size=(2, 2), strides=(2, 2), name="maxpool1", data_format="channels_last"
+    )(conv1)
+
+    fire2 = fire_module(maxpool1, 8, 32, 32, weight_decay_l2, 2)
+    fire3 = fire_module(fire2, 8, 32, 32, weight_decay_l2, 3)
+    if residual:
+        fire3 = Concatenate(axis=-1, name="fire3_resid")([fire2, fire3])
+    fire4 = fire_module(fire3, 16, 64, 64, weight_decay_l2, 4)
+
+    maxpool4 = MaxPooling2D(
+        pool_size=(2, 2), strides=(2, 2), name="maxpool4", data_format="channels_last"
+    )(fire4)
+
+    fire5 = fire_module(maxpool4, 16, 64, 64, weight_decay_l2, 5)
+    if residual:
+        fire5 = Concatenate(axis=-1, name="fire5_resid")([maxpool4, fire5])
+    fire6 = fire_module(fire5, 32, 128, 128, weight_decay_l2, 6)
+    fire7 = fire_module(fire6, 32, 128, 128, weight_decay_l2, 7)
+    fire8 = fire_module(fire7, 48, 192, 192, weight_decay_l2, 8)
+
+    maxpool8 = MaxPooling2D(
+        pool_size=(2, 2), strides=(2, 2), name="maxpool8", data_format="channels_last"
+    )(fire8)
+
+    fire9 = fire_module(maxpool8, 48, 192, 192, weight_decay_l2, 9)
+    if residual:
+        fire9 = Concatenate(axis=-1, name="fire9_resid")([maxpool8, fire9])
+    fire9_dropout = Dropout(0.5, name="fire9_dropout")(fire9)
+
+    conv10 = Convolution2D(
+        num_classes,
+        (1, 1),
+        activation=None,
+        kernel_initializer="glorot_uniform",
+        # kernel_regularizer=regularizers.l2(weight_decay_l2),
+        padding="valid",
+        name="conv10",
+        data_format="channels_last",
+    )(fire9_dropout)
+    # conv10 = BatchNormalization(name="conv10_bn")(conv10)
+    conv10 = Activation("relu", name="conv10_relu")(conv10)
+
+    global_avgpool10 = GlobalAveragePooling2D(data_format="channels_last")(conv10)
+    softmax = Activation("softmax", name="softmax")(global_avgpool10)
+    return input_img, softmax
+
+
 def SqueezeNet(num_classes, weight_decay_l2=0.0001, inputs=(128, 128, 3), residual=False):
     """
     A wrapper to build the original SqueezeNet Model as described in the paper.
@@ -261,9 +339,83 @@ def SqueezeNet(num_classes, weight_decay_l2=0.0001, inputs=(128, 128, 3), residu
         pool_size=(3, 3), strides=(2, 2), name="maxpool8", data_format="channels_last"
     )(fire8)
 
-    fire9 = fire_module(maxpool8, 64, 128, 128, weight_decay_l2, 9)
+    fire9 = fire_module(maxpool8, 64, 256, 256, weight_decay_l2, 9)
     if residual:
         fire9 = Concatenate(axis=-1, name="fire9_resid")([maxpool8, fire9])
+    fire9_dropout = Dropout(0.5, name="fire9_dropout")(fire9)
+
+    conv10 = Convolution2D(
+        num_classes,
+        (1, 1),
+        activation=None,
+        kernel_initializer="glorot_uniform",
+        # kernel_regularizer=regularizers.l2(weight_decay_l2),
+        padding="valid",
+        name="conv10",
+        data_format="channels_last",
+    )(fire9_dropout)
+    # conv10 = BatchNormalization(name="conv10_bn")(conv10)
+    conv10 = Activation("relu", name="conv10_relu")(conv10)
+
+    global_avgpool10 = GlobalAveragePooling2D(data_format="channels_last")(conv10)
+    softmax = Activation("softmax", name="softmax")(global_avgpool10)
+    return input_img, softmax
+
+
+def SqueezeNetv1_1Small(num_classes, weight_decay_l2=0.0001, inputs=(128, 128, 3), residual=False):
+    """
+    A wrapper to build SqueezeNet v1.1 Model
+
+    # Arguments
+        num_classes: number of classes defined for classification task
+        weight_decay_l2: weight decay for conv layers
+        inputs: input image dimensions
+
+    # Return
+        A SqueezeNet Keras Model
+    """
+    input_img = Input(shape=inputs)
+
+    conv1 = Convolution2D(
+        64,
+        (3, 3),
+        activation=None,
+        kernel_initializer="glorot_uniform",
+        # kernel_regularizer=regularizers.l2(weight_decay_l2),
+        strides=(2, 2),
+        padding="valid",
+        name="conv1",
+        data_format="channels_last",
+    )(input_img)
+    # conv1 = BatchNormalization(name="conv1_bn")(conv1)
+    conv1 = Activation("relu", name="conv1_relu")(conv1)
+
+    maxpool1 = MaxPooling2D(
+        pool_size=(3, 3), strides=(2, 2), name="maxpool1", data_format="channels_last"
+    )(conv1)
+
+    fire2 = fire_module(maxpool1, 16, 48, 48, weight_decay_l2, 2)
+    fire3 = fire_module(fire2, 16, 48, 48, weight_decay_l2, 3)
+    if residual:
+        fire3 = Concatenate(axis=-1, name="fire3_resid")([fire2, fire3])
+    maxpool3 = MaxPooling2D(
+        pool_size=(3, 3), strides=(2, 2), name="maxpool4", data_format="channels_last"
+    )(fire3)
+
+    fire4 = fire_module(maxpool3, 32, 96, 96, weight_decay_l2, 4)
+    fire5 = fire_module(fire4, 32, 96, 96, weight_decay_l2, 5)
+    if residual:
+        fire5 = Concatenate(axis=-1, name="fire5_resid")([fire4, fire5])
+    maxpool5 = MaxPooling2D(
+        pool_size=(3, 3), strides=(2, 2), name="maxpool5", data_format="channels_last"
+    )(fire5)
+
+    fire6 = fire_module(maxpool5, 48, 128, 128, weight_decay_l2, 6)
+    fire7 = fire_module(fire6, 48, 128, 128, weight_decay_l2, 7)
+    fire8 = fire_module(fire7, 64, 160, 160, weight_decay_l2, 8)
+    fire9 = fire_module(fire8, 64, 160, 160, weight_decay_l2, 9)
+    if residual:
+        fire9 = Concatenate(axis=-1, name="fire9_resid")([fire8, fire9])
     fire9_dropout = Dropout(0.5, name="fire9_dropout")(fire9)
 
     conv10 = Convolution2D(
@@ -480,15 +632,19 @@ class HyperModel(kt.HyperModel):
             # Create the model.
             input_shape = (224, 224, 3)
             residual = hp.Choice("residual", values=[True, False], default=False)
-            model_arch_str = hp.Choice("model_arch", values=["SqueezeNetSmall", "SqueezeNet", "SqueezeNetv1_1"], default="SqueezeNet")
+            model_arch_str = hp.Choice("model_arch", values=["SqueezeNetSmall", "SqueezeNetMedium", "SqueezeNet", "SqueezeNetv1_1", "SqueezeNetv1_1Small"], default="SqueezeNetv1_1Small")
 
             def getModelClass(string):
                 if string == "SqueezeNetSmall":
                     return SqueezeNetSmall # Trainable params: 256,818 (1003.20 KB)
+                elif string == "SqueezeNetMedium":
+                    return SqueezeNetMedium # Trainable params: 346,066 (1.32 MB)
                 elif string == "SqueezeNet":
-                    return SqueezeNet  # Trainable params: 653,762 (2.49 MB)
+                    return SqueezeNet  # Trainable params: 736,450 (2.81 MB)
                 elif string == "SqueezeNetv1_1":
                     return SqueezeNetv1_1  # Trainable params: 723,522 (2.76 MB)
+                elif string == "SqueezeNetv1_1Small":
+                    return SqueezeNetv1_1Small  # Trainable params: 479,106 (1.83 MB)
 
             model_arch = getModelClass(model_arch_str)
             inputs, outputs = model_arch(2, weight_decay, inputs=input_shape, residual=residual)
@@ -496,7 +652,7 @@ class HyperModel(kt.HyperModel):
             model = tf_shell_ml.PostScaleModel(
                 inputs=inputs,
                 outputs=outputs,
-                ubatch_per_batch=2**4,
+                ubatch_per_batch=2**5,  # 8x24GB GPUs
                 backprop_context_fn=backprop_context_fn,
                 noise_context_fn=noise_context_fn,
                 noise_multiplier_fn=noise_multiplier_fn,
@@ -615,95 +771,107 @@ def main(_):
             exit(0)
 
     # Set up training data.
-    data_dir = 'cats-and-dogs/dogs_vs_cats'
-    # Set a smaller batch size for testing
-    bs = 2**6
+    data_dir = 'cats-and-dogs'
+    bs = 2**12
     val_bs = 2**7
 
     # Next create the training and validation datasets on the feature holding
     # party. Note the validation dataset has both features and labels.
     with tf.device(features_party_dev):
-        # Defining data generator with Data Augmentation
-        data_gen_augmented = ImageDataGenerator(rescale = 1/255., 
-                                                validation_split = 0.18)
-                                                # zoom_range = 0.2,
-                                                # horizontal_flip= True,
-                                                # rotation_range = 20,
-                                                # width_shift_range=0.2,
-                                                # height_shift_range=0.2)
-        train_iterator = data_gen_augmented.flow_from_directory(data_dir, 
-                                                        target_size = (224, 224), 
-                                                        batch_size = bs,
-                                                        subset = 'training',
-                                                        class_mode = 'categorical',
-                                                        )
-
-        data_gen = ImageDataGenerator(rescale = 1/255., validation_split = 0.18)
-        print('Unchanged validation images:')
-        val_iterator = data_gen.flow_from_directory(data_dir, 
-                                                target_size = (224, 224), 
-                                                batch_size = val_bs,
-                                                subset = 'validation',
-                                                class_mode = 'categorical',
-                                                )
-        num_val_examples = val_iterator.samples
-
-
-        # Create tf.data.Dataset from the training iterator. The lambda ensures
-        # the iterator is obtained fresh if from_generator is called multiple
-        # times or if the dataset is re-iterated in some contexts. Keras
-        # iterators are usually epoch-aware.
-        train_dataset = tf.data.Dataset.from_generator(
-            lambda: train_iterator,
-            output_signature=(
-                tf.TensorSpec(shape=(bs, 224, 224, 3), dtype=tf.float32),
-                tf.TensorSpec(shape=(bs, 2), dtype=tf.float32)
-            )
+        train_dataset = tf.keras.preprocessing.image_dataset_from_directory(
+            f"{data_dir}/train",
+            image_size=(224, 224),
+            batch_size=bs,
+            label_mode='categorical',
+            shuffle=False,
         )
-        features_dataset = train_dataset.map(lambda f,l: f)
-    
-        val_dataset = tf.data.Dataset.from_generator(
-            lambda: val_iterator,
-            output_signature=(
-                tf.TensorSpec(shape=(val_bs, 224, 224, 3), dtype=tf.float32),
-                tf.TensorSpec(shape=(val_bs, 2), dtype=tf.float32)
-            )
+
+        val_dataset = tf.keras.preprocessing.image_dataset_from_directory(
+            f"{data_dir}/test",
+            image_size=(224, 224),
+            batch_size=val_bs,
+            label_mode='categorical',
+            shuffle=False,
         )
+
+        # Print the class ratio in the training and validation datasets
+        def _compute_class_stats(ds):
+            class_names = getattr(ds, 'class_names', None)
+            counts = None
+            for _, labels in ds:
+                batch_counts = tf.reduce_sum(labels, axis=0)
+                counts = batch_counts if counts is None else counts + batch_counts
+            if counts is None:
+                return class_names, None, None, 0
+            counts = tf.cast(tf.round(counts), tf.int64)
+            total = int(tf.reduce_sum(counts).numpy())
+            ratios = tf.cast(counts, tf.float32) / tf.cast(total, tf.float32)
+            return class_names, counts.numpy().tolist(), ratios.numpy().tolist(), total
+
+        def _print_class_stats(name, ds):
+            class_names, counts, ratios, total = _compute_class_stats(ds)
+            if counts is None:
+                print(f"{name}: dataset is empty")
+                return
+            if class_names is None:
+                class_names = [str(i) for i in range(len(counts))]
+            print(f"{name} total={total}")
+            for cname, c, r in zip(class_names, counts, ratios):
+                print(f"  {cname}: {c} ({r:.3f})")
+
+        _print_class_stats("Train", train_dataset)
+        _print_class_stats("Val", val_dataset)
+
+        # Rescale to [0, 1] and ensure float32 types for compatibility
+        def _rescale(images, labels):
+            images = tf.cast(images, tf.float32) / 255.0
+            labels = tf.cast(labels, tf.float32)
+            return images, labels
+
+        train_dataset = train_dataset.map(_rescale, num_parallel_calls=tf.data.AUTOTUNE)
+        val_dataset = val_dataset.map(_rescale, num_parallel_calls=tf.data.AUTOTUNE)
+
+        def _cardinality(dataset, batch_size):
+            batches = tf.data.experimental.cardinality(dataset)
+            if batches == tf.data.experimental.UNKNOWN_CARDINALITY:
+                # Fallback: iterate once to count
+                batches = sum(1 for _ in dataset)
+            else:
+                batches = int(batches.numpy())
+            examples = batches * batch_size
+            return examples
+        num_examples = _cardinality(train_dataset, bs)
+        num_val_examples = _cardinality(val_dataset, val_bs)
+        print("Number of training examples:", num_examples)
+        print("Number of validation examples:", num_val_examples)
+
+        # Features-only dataset to send to the model on the features party
+        features_dataset = train_dataset.map(lambda f, l: f, num_parallel_calls=tf.data.AUTOTUNE)
+
+        # Prefetch for performance
+        train_dataset = train_dataset.prefetch(tf.data.AUTOTUNE)
+        val_dataset = val_dataset.prefetch(tf.data.AUTOTUNE)
+        features_dataset = features_dataset.prefetch(tf.data.AUTOTUNE)
 
     # First create the training dataset which on the label holding party.
     # This party does not have the features.
     with tf.device(labels_party_dev):
-        # Defining data generator with Data Augmentation
-        data_gen_augmented = ImageDataGenerator(rescale = 1/255., 
-                                                validation_split = 0.18)
-                                                # zoom_range = 0.2,
-                                                # horizontal_flip= True,
-                                                # rotation_range = 20,
-                                                # width_shift_range=0.2,
-                                                # height_shift_range=0.2)
-        print('Augmented training images:')
-        train_iterator = data_gen_augmented.flow_from_directory(data_dir, 
-                                                          target_size = (224, 224), 
-                                                          batch_size = bs,
-                                                          subset = 'training',
-                                                          class_mode = 'categorical',
-                                                          )
-
-        num_examples = train_iterator.samples
-        print("Number of training examples:", num_examples)
-
-        # Create tf.data.Dataset from the training iterator
-        # The lambda ensures the iterator is obtained fresh if from_generator is
-        # called multiple times or if the dataset is re-iterated in some contexts.
-        # Keras iterators are usually epoch-aware.
-        train_dataset = tf.data.Dataset.from_generator(
-            lambda: train_iterator,
-            output_signature=(
-                tf.TensorSpec(shape=(bs, 224, 224, 3), dtype=tf.float32),
-                tf.TensorSpec(shape=(bs, 2), dtype=tf.float32)
-            )
+        train_dataset = tf.keras.preprocessing.image_dataset_from_directory(
+            f"{data_dir}/train",
+            image_size=(224, 224),
+            batch_size=bs,
+            label_mode='categorical',
+            shuffle=False,
         )
-        labels_dataset = train_dataset.map(lambda f,l: l)
+
+        # Features-only dataset to send to the model on the features party
+        labels_dataset = train_dataset.map(lambda f, l: l, num_parallel_calls=tf.data.AUTOTUNE)
+
+        # Prefetch for performance
+        labels_dataset = labels_dataset.prefetch(tf.data.AUTOTUNE)
+
+    # Write the first few examples to a pdf file to view them for the features
+    # and labels dataset.
 
     tf.config.run_functions_eagerly(FLAGS.eager_mode)
 
@@ -734,7 +902,7 @@ def main(_):
         # TensorBoard kwargs.
         write_steps_per_second=True,
         update_freq="batch",
-        profile_batch=2,
+        # profile_batch=2,
     )
 
     if FLAGS.tune:
@@ -763,11 +931,8 @@ def main(_):
         tuner.search(
             features_dataset,
             labels_dataset,
-            # steps_per_epoch=num_examples // bs,
-            steps_per_epoch=10,  # shorten to just 10
             epochs=FLAGS.epochs,
             validation_data=val_dataset,
-            validation_steps=num_val_examples // val_bs,
             callbacks=[tb, stop_early],
         )
         tuner.results_summary()
@@ -805,11 +970,8 @@ def main(_):
             trial,
             features_dataset,
             labels_dataset,
-            # steps_per_epoch=num_examples // bs,
-            steps_per_epoch=10,  # shorten to just 10
             epochs=FLAGS.epochs,
             validation_data=val_dataset,
-            validation_steps=num_val_examples // val_bs,
             callbacks=[tb],
         )
 

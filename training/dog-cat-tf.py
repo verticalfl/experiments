@@ -40,17 +40,14 @@ from noise_multiplier_finder import search_noise_multiplier
 # https://www.researchgate.net/profile/Thomas-Unterthiner/publication/309935608_Speeding_up_Semantic_Segmentation_for_Autonomous_Driving/links/58524adf08ae7d33e01a58a7/Speeding-up-Semantic-Segmentation-for-Autonomous-Driving.pdf
 #   Note this paper says training took 22 hours on 2 GPUs, with some weights pre-initialized!
 
-flags.DEFINE_float("learning_rate", 1e-3, "Learning rate for training")
+flags.DEFINE_float("learning_rate", 1e-4, "Learning rate for training")
 flags.DEFINE_float("beta_1", 0.9, "Beta 1 for Adam optimizer")
 flags.DEFINE_float("decay_rate", 1.0, "Learning rate decay.")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_bool("eager_mode", False, "Eager mode")
 flags.DEFINE_bool("tune", False, "Tune hyperparameters (or use default values).")
 FLAGS = flags.FLAGS
-
-# Clip the input images to make testing faster.
-clip_by = 0
-tf.random.set_seed(7)
+tf.random.set_seed(1337)
 
 # from keras.models import Model
 from keras.layers import Input, Activation, Concatenate
@@ -87,7 +84,7 @@ def fire_module(input_fire, s1, e1, e3, weight_decay_l2, fireID):
         name="fire" + str(fireID) + "_squeeze",
         data_format="channels_last",
     )(input_fire)
-    output_squeeze = BatchNormalization(name="fire" + str(fireID) + "_squeeze_bn")(output_squeeze)
+    # output_squeeze = BatchNormalization(name="fire" + str(fireID) + "_squeeze_bn")(output_squeeze)
     output_squeeze = Activation("relu", name="fire" + str(fireID) + "_squeeze_relu")(output_squeeze)
     
     # Expansion steps
@@ -101,7 +98,7 @@ def fire_module(input_fire, s1, e1, e3, weight_decay_l2, fireID):
         name="fire" + str(fireID) + "_expand1",
         data_format="channels_last",
     )(output_squeeze)
-    output_expand1 = BatchNormalization(name="fire" + str(fireID) + "_expand1_bn")(output_expand1)
+    # output_expand1 = BatchNormalization(name="fire" + str(fireID) + "_expand1_bn")(output_expand1)
     output_expand1 = Activation("relu", name="fire" + str(fireID) + "_expand1_relu")(output_expand1)
     
     output_expand2 = Convolution2D(
@@ -114,7 +111,7 @@ def fire_module(input_fire, s1, e1, e3, weight_decay_l2, fireID):
         name="fire" + str(fireID) + "_expand2",
         data_format="channels_last",
     )(output_squeeze)
-    output_expand2 = BatchNormalization(name="fire" + str(fireID) + "_expand2_bn")(output_expand2)
+    # output_expand2 = BatchNormalization(name="fire" + str(fireID) + "_expand2_bn")(output_expand2)
     output_expand2 = Activation("relu", name="fire" + str(fireID) + "_expand2_relu")(output_expand2)
     
     # Merge expanded activations
@@ -200,6 +197,84 @@ def SqueezeNetSmall(num_classes, weight_decay_l2=0.0001, inputs=(128, 128, 3), r
     return input_img, softmax
 
 
+def SqueezeNetMedium(num_classes, weight_decay_l2=0.0001, inputs=(128, 128, 3), residual=False):
+    """
+    A wrapper to build a medium version of the SqueezeNet Model.
+    Note the reduced number of filters in each fire module.
+
+    # Arguments
+        num_classes: number of classes defined for classification task
+        weight_decay_l2: weight decay for conv layers
+        inputs: input image dimensions
+        residual: whether to use residual connections
+
+    # Return
+        The input and output layer of the model
+    """
+    input_img = Input(shape=inputs)
+
+    conv1 = Convolution2D(
+        32,
+        (7, 7),
+        activation=None,
+        kernel_initializer="glorot_uniform",
+        # kernel_regularizer=regularizers.l2(weight_decay_l2),
+        strides=(2, 2),
+        padding="same",
+        name="conv1",
+        data_format="channels_last",
+    )(input_img)
+    # conv1 = BatchNormalization(name="conv1_bn")(conv1)
+    conv1 = Activation("relu", name="conv1_relu")(conv1)
+
+    maxpool1 = MaxPooling2D(
+        pool_size=(2, 2), strides=(2, 2), name="maxpool1", data_format="channels_last"
+    )(conv1)
+
+    fire2 = fire_module(maxpool1, 8, 32, 32, weight_decay_l2, 2)
+    fire3 = fire_module(fire2, 8, 32, 32, weight_decay_l2, 3)
+    if residual:
+        fire3 = Concatenate(axis=-1, name="fire3_resid")([fire2, fire3])
+    fire4 = fire_module(fire3, 16, 64, 64, weight_decay_l2, 4)
+
+    maxpool4 = MaxPooling2D(
+        pool_size=(2, 2), strides=(2, 2), name="maxpool4", data_format="channels_last"
+    )(fire4)
+
+    fire5 = fire_module(maxpool4, 16, 64, 64, weight_decay_l2, 5)
+    if residual:
+        fire5 = Concatenate(axis=-1, name="fire5_resid")([maxpool4, fire5])
+    fire6 = fire_module(fire5, 32, 128, 128, weight_decay_l2, 6)
+    fire7 = fire_module(fire6, 32, 128, 128, weight_decay_l2, 7)
+    fire8 = fire_module(fire7, 48, 192, 192, weight_decay_l2, 8)
+
+    maxpool8 = MaxPooling2D(
+        pool_size=(2, 2), strides=(2, 2), name="maxpool8", data_format="channels_last"
+    )(fire8)
+
+    fire9 = fire_module(maxpool8, 48, 192, 192, weight_decay_l2, 9)
+    if residual:
+        fire9 = Concatenate(axis=-1, name="fire9_resid")([maxpool8, fire9])
+    fire9_dropout = Dropout(0.5, name="fire9_dropout")(fire9)
+
+    conv10 = Convolution2D(
+        num_classes,
+        (1, 1),
+        activation=None,
+        kernel_initializer="glorot_uniform",
+        # kernel_regularizer=regularizers.l2(weight_decay_l2),
+        padding="valid",
+        name="conv10",
+        data_format="channels_last",
+    )(fire9_dropout)
+    # conv10 = BatchNormalization(name="conv10_bn")(conv10)
+    conv10 = Activation("relu", name="conv10_relu")(conv10)
+
+    global_avgpool10 = GlobalAveragePooling2D(data_format="channels_last")(conv10)
+    softmax = Activation("softmax", name="softmax")(global_avgpool10)
+    return input_img, softmax
+
+
 def SqueezeNet(num_classes, weight_decay_l2=0.0001, inputs=(128, 128, 3), residual=False):
     """
     A wrapper to build the original SqueezeNet Model as described in the paper.
@@ -254,9 +329,83 @@ def SqueezeNet(num_classes, weight_decay_l2=0.0001, inputs=(128, 128, 3), residu
         pool_size=(3, 3), strides=(2, 2), name="maxpool8", data_format="channels_last"
     )(fire8)
 
-    fire9 = fire_module(maxpool8, 64, 128, 128, weight_decay_l2, 9)
+    fire9 = fire_module(maxpool8, 64, 256, 256, weight_decay_l2, 9)
     if residual:
         fire9 = Concatenate(axis=-1, name="fire9_resid")([maxpool8, fire9])
+    fire9_dropout = Dropout(0.5, name="fire9_dropout")(fire9)
+
+    conv10 = Convolution2D(
+        num_classes,
+        (1, 1),
+        activation=None,
+        kernel_initializer="glorot_uniform",
+        # kernel_regularizer=regularizers.l2(weight_decay_l2),
+        padding="valid",
+        name="conv10",
+        data_format="channels_last",
+    )(fire9_dropout)
+    # conv10 = BatchNormalization(name="conv10_bn")(conv10)
+    conv10 = Activation("relu", name="conv10_relu")(conv10)
+
+    global_avgpool10 = GlobalAveragePooling2D(data_format="channels_last")(conv10)
+    softmax = Activation("softmax", name="softmax")(global_avgpool10)
+    return input_img, softmax
+
+
+def SqueezeNetv1_1Small(num_classes, weight_decay_l2=0.0001, inputs=(128, 128, 3), residual=False):
+    """
+    A wrapper to build SqueezeNet v1.1 Model
+
+    # Arguments
+        num_classes: number of classes defined for classification task
+        weight_decay_l2: weight decay for conv layers
+        inputs: input image dimensions
+
+    # Return
+        A SqueezeNet Keras Model
+    """
+    input_img = Input(shape=inputs)
+
+    conv1 = Convolution2D(
+        64,
+        (3, 3),
+        activation=None,
+        kernel_initializer="glorot_uniform",
+        # kernel_regularizer=regularizers.l2(weight_decay_l2),
+        strides=(2, 2),
+        padding="valid",
+        name="conv1",
+        data_format="channels_last",
+    )(input_img)
+    # conv1 = BatchNormalization(name="conv1_bn")(conv1)
+    conv1 = Activation("relu", name="conv1_relu")(conv1)
+
+    maxpool1 = MaxPooling2D(
+        pool_size=(3, 3), strides=(2, 2), name="maxpool1", data_format="channels_last"
+    )(conv1)
+
+    fire2 = fire_module(maxpool1, 16, 48, 48, weight_decay_l2, 2)
+    fire3 = fire_module(fire2, 16, 48, 48, weight_decay_l2, 3)
+    if residual:
+        fire3 = Concatenate(axis=-1, name="fire3_resid")([fire2, fire3])
+    maxpool3 = MaxPooling2D(
+        pool_size=(3, 3), strides=(2, 2), name="maxpool4", data_format="channels_last"
+    )(fire3)
+
+    fire4 = fire_module(maxpool3, 32, 96, 96, weight_decay_l2, 4)
+    fire5 = fire_module(fire4, 32, 96, 96, weight_decay_l2, 5)
+    if residual:
+        fire5 = Concatenate(axis=-1, name="fire5_resid")([fire4, fire5])
+    maxpool5 = MaxPooling2D(
+        pool_size=(3, 3), strides=(2, 2), name="maxpool5", data_format="channels_last"
+    )(fire5)
+
+    fire6 = fire_module(maxpool5, 48, 128, 128, weight_decay_l2, 6)
+    fire7 = fire_module(fire6, 48, 128, 128, weight_decay_l2, 7)
+    fire8 = fire_module(fire7, 64, 160, 160, weight_decay_l2, 8)
+    fire9 = fire_module(fire8, 64, 160, 160, weight_decay_l2, 9)
+    if residual:
+        fire9 = Concatenate(axis=-1, name="fire9_resid")([fire8, fire9])
     fire9_dropout = Dropout(0.5, name="fire9_dropout")(fire9)
 
     conv10 = Convolution2D(
@@ -395,7 +544,7 @@ class HyperModel(kt.HyperModel):
         # Create the model.
         input_shape = (224, 224, 3)
         weight_decay = hp.Choice("weight_decay", values=[0.0, 1e-5, 1e-4, 5e-4, 1e-3], default=0.)
-        inputs, outputs = SqueezeNet(2, weight_decay, inputs=input_shape)
+        inputs, outputs = SqueezeNetv1_1Small(2, weight_decay, inputs=input_shape)
 
         model = keras.Model(
             inputs=inputs,
@@ -434,9 +583,56 @@ class HyperModel(kt.HyperModel):
 
 def main(_):
     # Set up training data.
-    data_dir = 'cats-and-dogs/dogs_vs_cats'
-    bs = 2**10  # Note this is smaller than PostScale protocol uses (2**12)
-    val_bs = 2**7
+    data_dir = 'cats-and-dogs'
+    bs = 2**9  # Note this is smaller than PostScale protocol uses (2**12)
+    val_bs = 2**5
+
+    train_dataset = tf.keras.preprocessing.image_dataset_from_directory(
+        f"{data_dir}/train",
+        image_size=(224, 224),
+        batch_size=bs,
+        label_mode='categorical',
+        shuffle=False,
+    )
+
+    val_dataset = tf.keras.preprocessing.image_dataset_from_directory(
+        f"{data_dir}/test",
+        validation_split=0.18,
+        subset='validation',
+        image_size=(224, 224),
+        batch_size=val_bs,
+        label_mode='categorical',
+        shuffle=False,
+    )
+
+    # Rescale to [0, 1] and ensure float32 types for compatibility
+    def _rescale(images, labels):
+        images = tf.cast(images, tf.float32) / 255.0
+        labels = tf.cast(labels, tf.float32)
+        return images, labels
+
+    train_dataset = train_dataset.map(_rescale, num_parallel_calls=tf.data.AUTOTUNE)
+    val_dataset = val_dataset.map(_rescale, num_parallel_calls=tf.data.AUTOTUNE)
+
+    # Derive validation example count from dataset cardinality
+    _val_batches = tf.data.experimental.cardinality(val_dataset)
+    if _val_batches == tf.data.experimental.UNKNOWN_CARDINALITY:
+        # Fallback: iterate once to count
+        _val_batches = sum(1 for _ in val_dataset)
+    else:
+        _val_batches = int(_val_batches.numpy())
+    num_val_examples = _val_batches * val_bs
+
+    # Features-only dataset to send to the model on the features party
+    features_dataset = train_dataset.map(lambda f, l: f, num_parallel_calls=tf.data.AUTOTUNE)
+
+    labels_dataset = train_dataset.map(lambda f, l: l, num_parallel_calls=tf.data.AUTOTUNE)
+
+    # Prefetch for performance
+    # train_dataset = train_dataset.prefetch(tf.data.AUTOTUNE)
+    # val_dataset = val_dataset.prefetch(tf.data.AUTOTUNE)
+    # features_dataset = features_dataset.prefetch(tf.data.AUTOTUNE)
+    # labels_dataset = labels_dataset.prefetch(tf.data.AUTOTUNE)
 
     # Defining data generator with Data Augmentation
     data_gen_augmented = ImageDataGenerator(rescale = 1/255., 
