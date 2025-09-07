@@ -1,7 +1,7 @@
 # https://builtin.com/machine-learning/vgg16
 # dataset from https://www.kaggle.com/datasets/salader/dogs-vs-cats/data
 # unzip the dataset to the current directory
-# mkdir -p cats-and-dogs && unzip -q ../cats-and-dogs.zip -d cats-and-dogs
+# mkdir -p cats-and-dogs && unzip -q ../cats-and-dogs.zip
 name="dog-cat-post-scale-conv"
 import time
 from datetime import datetime
