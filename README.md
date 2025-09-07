@@ -60,7 +60,10 @@ see a file that starts with `events.out...`. Then `mv ../plugins ./`
 ## Set up a Debain 12 VM from scratch with CUDA
 
 ```bash
-sudo apt update && sudo apt upgrade
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y sudo git git-lfs unzip python3 python3-pip python3-venv
+
+# Install GPU drivers
 sudo apt install -y linux-headers-$(uname -r)
 wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
@@ -69,4 +72,15 @@ sudo apt-get update
 sudo apt install cuda-toolkit-12-5 git python3-pip python-is-python3
 sudo apt-get install -y nvidia-open
 sudo modprobe nvidia
+
+git clone github.com:verticalfl/experiments
+cd experiments
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+cd training
+mkdir -p cats-and-dogs && unzip -q ../cats-and-dogs.zip
 ```
