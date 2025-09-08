@@ -632,7 +632,7 @@ class HyperModel(kt.HyperModel):
             # Create the model.
             input_shape = (224, 224, 3)
             residual = hp.Choice("residual", values=[True, False], default=False)
-            model_arch_str = hp.Choice("model_arch", values=["SqueezeNetSmall", "SqueezeNetMedium", "SqueezeNet", "SqueezeNetv1_1", "SqueezeNetv1_1Small"], default="SqueezeNetv1_1Small")
+            model_arch_str = hp.Choice("model_arch", values=["SqueezeNetSmall", "SqueezeNetMedium", "SqueezeNet", "SqueezeNetv1_1", "SqueezeNetv1_1Small"], default="SqueezeNetv1_1")
 
             def getModelClass(string):
                 if string == "SqueezeNetSmall":
