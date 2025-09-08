@@ -60,6 +60,7 @@ class HyperModel(kt.HyperModel):
         self.jacobian_devs = jacobian_devs
         self.cache_path = cache_path
         self.num_examples = num_examples
+        self.strategy = tf.distribute.MirroredStrategy(devices=self.jacobian_devs)
 
     def hp_hash(self, hp_dict):
         """Returns a stable short hash for a dictionary of hyperparameter values."""
@@ -186,6 +187,7 @@ class HyperModel(kt.HyperModel):
             simple_noise_INSECURE= FLAGS.dp_sgd or FLAGS.rand_resp,
             clip_threshold=clip_threshold,
             check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
+            jacobian_strategy=self.strategy,
         )
 
         model.build((None,) + input_shape)
