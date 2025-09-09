@@ -73,7 +73,7 @@ sudo apt install -y cuda-toolkit-12-5
 sudo apt-get install -y nvidia-open
 sudo modprobe nvidia
 
-git clone github.com:verticalfl/experiments
+git clone https://github.com/verticalfl/experiments
 cd experiments
 
 python3 -m venv .venv
