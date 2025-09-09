@@ -61,7 +61,7 @@ see a file that starts with `events.out...`. Then `mv ../plugins ./`
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y sudo git git-lfs unzip python3 python3-pip python3-venv
+sudo apt install -y sudo git git-lfs unzip python3 python3-pip python3-venv python-is-python3 tmux btop
 
 # Install GPU drivers
 sudo apt install -y linux-headers-$(uname -r)
@@ -69,7 +69,7 @@ wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cu
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
 sudo add-apt-repository contrib
 sudo apt-get update
-sudo apt install cuda-toolkit-12-5 git python3-pip python-is-python3
+sudo apt install -y cuda-toolkit-12-5
 sudo apt-get install -y nvidia-open
 sudo modprobe nvidia
 
