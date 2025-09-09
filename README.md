@@ -61,7 +61,7 @@ see a file that starts with `events.out...`. Then `mv ../plugins ./`
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y sudo git git-lfs unzip python3 python3-pip python3-venv python-is-python3 tmux btop
+sudo apt install -y sudo git git-lfs unzip python3 python3-pip python3-venv python-is-python3 tmux btop earlyoom
 
 # Install GPU drivers
 sudo apt install -y linux-headers-$(uname -r)
