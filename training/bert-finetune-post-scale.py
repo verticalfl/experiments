@@ -197,16 +197,20 @@ class HyperModel(kt.HyperModel):
                 "padding_mask": padding_mask,
                 "segment_ids": segment_ids,
             }
-            backbone = keras_hub.models.BertBackbone(
-                vocabulary_size=self.vocab_size,
-                num_layers=2,
-                num_heads=2,
-                # hidden_dim=128,  # bert tiny
-                hidden_dim=64,
-                #intermediate_dim=512,  # bert tiny
-                intermediate_dim=64,
-                max_sequence_length=sentence_length,
-            )(bert_inputs)
+            #backbone = keras_hub.models.BertBackbone(
+            #    vocabulary_size=self.vocab_size,
+            #    #num_layers=12,  # bert base
+            #    #num_heads=12,  # bert base
+            #    #hidden_dim=768,  # bert base
+            #    #intermediate_dim=3072,  # bert base
+            #    num_layers=24,  # bert large
+            #    num_heads=16,  # bert large
+            #    hidden_dim=1024,  # bert large
+            #    intermediate_dim=4096,  # bert large
+            #    max_sequence_length=sentence_length,
+            #    trainable=False,
+            #)(bert_inputs)
+            backbone = keras_hub.models.BertBackbone.from_preset("bert_base_en", trainable=False)(bert_inputs)
             x = backbone["pooled_output"]
             x = tf.keras.layers.Dropout(0.5)(x)
             x = tf.keras.layers.Dense(
@@ -218,7 +222,7 @@ class HyperModel(kt.HyperModel):
             model = tf_shell_ml.PostScaleModel(
                 inputs=single_input,
                 outputs=x,
-                ubatch_per_batch=2**8,
+                ubatch_per_batch=1,
                 backprop_context_fn=backprop_context_fn,
                 noise_context_fn=noise_context_fn,
                 noise_multiplier_fn=noise_multiplier_fn,
