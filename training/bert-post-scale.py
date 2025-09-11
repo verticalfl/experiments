@@ -24,8 +24,8 @@ from noise_multiplier_finder import search_noise_multiplier
 import keras_tuner as kt
 import keras_nlp as keras_hub
 
-flags.DEFINE_float("learning_rate", 0.1, "Learning rate for training")
-flags.DEFINE_float("beta_1", 0.7, "Beta 1 for Adam optimizer")
+flags.DEFINE_float("learning_rate", 0.001, "Learning rate for training")
+flags.DEFINE_float("beta_1", 0.9, "Beta 1 for Adam optimizer")
 flags.DEFINE_float("epsilon", 1.0, "Differential privacy parameter")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
@@ -56,6 +56,8 @@ flags.DEFINE_bool("tune", False, "Tune hyperparameters (or use default values)."
 FLAGS = flags.FLAGS
 
 sentence_length = 64
+# max_vocab_size = 10000  # 810 GB RAM
+max_vocab_size = 20000  # 1.3 TB RAM
 
 class HyperModel(kt.HyperModel):
     def __init__(self, labels_party_dev, features_party_dev, jacobian_devs, cache_path, vocab_size, num_examples):
@@ -201,10 +203,10 @@ class HyperModel(kt.HyperModel):
                 vocabulary_size=self.vocab_size,
                 num_layers=2,
                 num_heads=2,
-                # hidden_dim=128,  # bert tiny
-                hidden_dim=64,
-                #intermediate_dim=512,  # bert tiny
-                intermediate_dim=64,
+                hidden_dim=128,  # bert tiny
+                #hidden_dim=64,
+                intermediate_dim=512,  # bert tiny
+                #intermediate_dim=64,
                 max_sequence_length=sentence_length,
             )(bert_inputs)
             x = backbone["pooled_output"]
@@ -218,7 +220,7 @@ class HyperModel(kt.HyperModel):
             model = tf_shell_ml.PostScaleModel(
                 inputs=single_input,
                 outputs=x,
-                ubatch_per_batch=2**8,
+                ubatch_per_batch=2**3,  # h100
                 backprop_context_fn=backprop_context_fn,
                 noise_context_fn=noise_context_fn,
                 noise_multiplier_fn=noise_multiplier_fn,
@@ -346,11 +348,27 @@ def main(_):
         target_delta = 10**int(math.floor(math.log10(1 / num_examples)))
         print("Target delta:", target_delta)
 
-        preprocessor = keras_hub.models.BertPreprocessor.from_preset(
-            "bert_tiny_en_uncased",
+        # Define the path for the new vocabulary file
+        vocab_file_path = "/tmp/imdb_vocab.txt"
+        
+        # Generate the vocabulary with a smaller size (e.g., 5000)
+        keras_hub.tokenizers.compute_word_piece_vocabulary(
+            data=features_dataset,
+            lowercase=True,
+            vocabulary_size=max_vocab_size,
+            vocabulary_output_file=vocab_file_path,
+            reserved_tokens=["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
+        )
+        # Load the custom vocabulary file
+        with open(vocab_file_path, "r") as f:
+            custom_vocab = f.read().splitlines()
+        tokenizer = keras_hub.models.BertTokenizer(vocabulary=custom_vocab)
+        preprocessor = keras_hub.models.BertPreprocessor(
+            tokenizer,
             sequence_length=sentence_length,
         )
         vocab_size = preprocessor.tokenizer.vocabulary_size()
+        print("vocab size", vocab_size)
 
         # Preprocess the datasets.
         def preprocess_features(text):

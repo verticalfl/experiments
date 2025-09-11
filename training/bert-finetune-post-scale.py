@@ -24,8 +24,8 @@ from noise_multiplier_finder import search_noise_multiplier
 import keras_tuner as kt
 import keras_nlp as keras_hub
 
-flags.DEFINE_float("learning_rate", 0.1, "Learning rate for training")
-flags.DEFINE_float("beta_1", 0.7, "Beta 1 for Adam optimizer")
+flags.DEFINE_float("learning_rate", 0.01, "Learning rate for training")
+flags.DEFINE_float("beta_1", 0.8, "Beta 1 for Adam optimizer")
 flags.DEFINE_float("epsilon", 1.0, "Differential privacy parameter")
 flags.DEFINE_integer("epochs", 10, "Number of epochs")
 flags.DEFINE_enum(
