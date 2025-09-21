@@ -182,12 +182,12 @@ class HyperModel(kt.HyperModel):
             strides=1,
         )(x)
         x = tf_shell_ml.Flatten()(x)
-        x = tf_shell_ml.Dense(
+        x = tf_shell_ml.ShellDense(
             32,
             activation=tf.nn.relu,
             activation_deriv=tf_shell_ml.relu_deriv,  # Note: tf-shell specific
         )(x)
-        x = tf_shell_ml.Dense(
+        x = tf_shell_ml.ShellDense(
             10,
             activation=tf.nn.softmax,
         )(x)

@@ -172,8 +172,8 @@ class HyperModel(kt.HyperModel):
 
         input_shape = (784,)
         input_img = keras.layers.Input(shape=input_shape)
-        x = tf_shell_ml.Dense(100, activation=tf.nn.relu, activation_deriv=tf_shell_ml.relu_deriv)(input_img)
-        x = tf_shell_ml.Dense(2, activation=tf.nn.softmax)(x)
+        x = tf_shell_ml.ShellDense(100, activation=tf.nn.relu, activation_deriv=tf_shell_ml.relu_deriv)(input_img)
+        x = tf_shell_ml.ShellDense(2, activation=tf.nn.softmax)(x)
 
         # Create the model. When using DPSGD, you must use Shell* layers.
         model = tf_shell_ml.DpSgdModel(
