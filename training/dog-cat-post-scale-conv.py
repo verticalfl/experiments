@@ -519,7 +519,6 @@ class HyperModel(kt.HyperModel):
         self.jacobian_devs = jacobian_devs
         self.cache_path = cache_path
         self.num_examples = num_examples
-        self.strategy = tf.distribute.MirroredStrategy(devices=self.jacobian_devs)
 
     def hp_hash(self, hp_dict):
         """Returns a stable short hash for a dictionary of hyperparameter values."""
@@ -561,146 +560,142 @@ class HyperModel(kt.HyperModel):
         return super().fit(hp, model, *args, **kwargs)
 
     def build(self, hp):
-        # Build the model on the feature holding party's CPU (vs GPU) to ensure
-        # each GPU can process in parallel.
-        with self.strategy.scope():
-            # Define functions which generate encryption context for the
-            # backpropagation and noise parts of the protocol. When not executing
-            # eagerly, autocontext can be used to automatically determine the
-            # encryption parameters. When executing eagerly, parameters must be
-            # specified manually (or simply copied from a previous run which uses
-            # autocontext).
-            backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=20, max_value=34, step=1, default=FLAGS.backprop_cleartext_sz)
-            backprop_scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
-            backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 14, 16, 32, 48], default=FLAGS.backprop_noise_offset)
+        # Define functions which generate encryption context for the
+        # backpropagation and noise parts of the protocol. When not executing
+        # eagerly, autocontext can be used to automatically determine the
+        # encryption parameters. When executing eagerly, parameters must be
+        # specified manually (or simply copied from a previous run which uses
+        # autocontext).
+        backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=20, max_value=34, step=1, default=FLAGS.backprop_cleartext_sz)
+        backprop_scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
+        backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 14, 16, 32, 48], default=FLAGS.backprop_noise_offset)
 
-            noise_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
-            noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
-            # 0 and 40 correspond to ring degree of 2**12 and 2**13
+        noise_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
+        noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
+        # 0 and 40 correspond to ring degree of 2**12 and 2**13
 
-            clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=1.0)
-            weight_decay = hp.Choice("weight_decay", values=[0.0, 1e-5, 1e-4, 5e-4, 1e-3], default=0.)
+        clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=1.0)
+        weight_decay = hp.Choice("weight_decay", values=[0.0, 1e-5, 1e-4, 5e-4, 1e-3], default=0.)
 
-            def backprop_context_fn(read_cache):
-                if FLAGS.eager_mode:
-                    return tf_shell.create_context64(
-                        log_n=12,
-                        main_moduli=[1688880462102529, 2181470596882433],
-                        plaintext_modulus=8590090241,
-                        scaling_factor=FLAGS.backprop_scaling_factor,
-                    )
-                else:
-                    return tf_shell.create_autocontext64(
-                        log2_cleartext_sz=backprop_cleartext_sz,
-                        scaling_factor=backprop_scaling_factor,
-                        noise_offset_log2=backprop_noise_offset,
-                        read_from_cache=read_cache,
-                        cache_path=self.cache_path,
-                    )
-
-            def noise_context_fn (read_cache):
-                if FLAGS.eager_mode:
-                    return tf_shell.create_context64(
-                        log_n=12,
-                        main_moduli=[6192450225922049, 16325550595612673],
-                        plaintext_modulus=68719484929,
-                    )
-                else:
-                    return tf_shell.create_autocontext64(
-                        log2_cleartext_sz=noise_cleartext_sz,
-                        noise_offset_log2=noise_noise_offset,
-                        read_from_cache=read_cache,
-                        cache_path=self.cache_path,
-                    )
-
-            def noise_multiplier_fn(batch_size):
-                # If doing randomized response, we don't need to compute the noise
-                # multiplier. Return 0 to disable noise.
-                if FLAGS.rand_resp:
-                    return 0.0
-                # Set delta to 1/num_examples, rounded to nearest power of 10.
-                target_delta = 10**int(math.floor(math.log10(1 / self.num_examples)))
-                print(f"Target delta {target_delta}")
-                return search_noise_multiplier(
-                    target_epsilon=FLAGS.epsilon,
-                    target_delta=target_delta,
-                    epochs=FLAGS.epochs,
-                    training_num_samples=self.num_examples,
-                    batch_size=batch_size,
+        def backprop_context_fn(read_cache):
+            if FLAGS.eager_mode:
+                return tf_shell.create_context64(
+                    log_n=12,
+                    main_moduli=[1688880462102529, 2181470596882433],
+                    plaintext_modulus=8590090241,
+                    scaling_factor=FLAGS.backprop_scaling_factor,
+                )
+            else:
+                return tf_shell.create_autocontext64(
+                    log2_cleartext_sz=backprop_cleartext_sz,
+                    scaling_factor=backprop_scaling_factor,
+                    noise_offset_log2=backprop_noise_offset,
+                    read_from_cache=read_cache,
+                    cache_path=self.cache_path,
                 )
 
-            # Create the model.
-            input_shape = (224, 224, 3)
-            residual = hp.Choice("residual", values=[True, False], default=False)
-            model_arch_str = hp.Choice("model_arch", values=["SqueezeNetSmall", "SqueezeNetMedium", "SqueezeNet", "SqueezeNetv1_1", "SqueezeNetv1_1Small"], default="SqueezeNetv1_1")
+        def noise_context_fn (read_cache):
+            if FLAGS.eager_mode:
+                return tf_shell.create_context64(
+                    log_n=12,
+                    main_moduli=[6192450225922049, 16325550595612673],
+                    plaintext_modulus=68719484929,
+                )
+            else:
+                return tf_shell.create_autocontext64(
+                    log2_cleartext_sz=noise_cleartext_sz,
+                    noise_offset_log2=noise_noise_offset,
+                    read_from_cache=read_cache,
+                    cache_path=self.cache_path,
+                )
 
-            def getModelClass(string):
-                if string == "SqueezeNetSmall":
-                    return SqueezeNetSmall # Trainable params: 256,818 (1003.20 KB)
-                elif string == "SqueezeNetMedium":
-                    return SqueezeNetMedium # Trainable params: 346,066 (1.32 MB)
-                elif string == "SqueezeNet":
-                    return SqueezeNet  # Trainable params: 736,450 (2.81 MB)
-                elif string == "SqueezeNetv1_1":
-                    return SqueezeNetv1_1  # Trainable params: 723,522 (2.76 MB)
-                elif string == "SqueezeNetv1_1Small":
-                    return SqueezeNetv1_1Small  # Trainable params: 479,106 (1.83 MB)
-
-            model_arch = getModelClass(model_arch_str)
-            inputs, outputs = model_arch(2, weight_decay, inputs=input_shape, residual=residual)
-
-            model = tf_shell_ml.PostScaleModel(
-                inputs=inputs,
-                outputs=outputs,
-                ubatch_per_batch=2**5,  # 8x24GB GPUs
-                backprop_context_fn=backprop_context_fn,
-                noise_context_fn=noise_context_fn,
-                noise_multiplier_fn=noise_multiplier_fn,
-                labels_party_dev=self.labels_party_dev,
-                features_party_dev=self.features_party_dev,
-                cache_path=self.cache_path,
-                jacobian_devices=self.jacobian_devs,
-                disable_he_backprop_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
-                disable_masking_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
-                simple_noise_INSECURE= FLAGS.dp_sgd or FLAGS.rand_resp,
-                clip_threshold=clip_threshold,
-                check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
-                jacobian_strategy=self.strategy,
+        def noise_multiplier_fn(batch_size):
+            # If doing randomized response, we don't need to compute the noise
+            # multiplier. Return 0 to disable noise.
+            if FLAGS.rand_resp:
+                return 0.0
+            # Set delta to 1/num_examples, rounded to nearest power of 10.
+            target_delta = 10**int(math.floor(math.log10(1 / self.num_examples)))
+            print(f"Target delta {target_delta}")
+            return search_noise_multiplier(
+                target_epsilon=FLAGS.epsilon,
+                target_delta=target_delta,
+                epochs=FLAGS.epochs,
+                training_num_samples=self.num_examples,
+                batch_size=batch_size,
             )
 
-            model.build((None,) + input_shape)
-            model.summary()
+        # Create the model.
+        input_shape = (224, 224, 3)
+        residual = hp.Choice("residual", values=[True, False], default=False)
+        model_arch_str = hp.Choice("model_arch", values=["SqueezeNetSmall", "SqueezeNetMedium", "SqueezeNet", "SqueezeNetv1_1", "SqueezeNetv1_1Small"], default="SqueezeNetv1_1Small")
 
-            # Learning rate warm up is good practice for large batch sizes.
-            # see https://arxiv.org/pdf/1706.02677
-            lr = hp.Choice("learning_rate", values=[1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 1e-6], default=FLAGS.learning_rate)
-            # warmup_steps = hp.Choice("warmup_steps", values=[0, 2, 4], default=0)
-            # decay_rate = hp.Choice("decay_rate", values=[0.95, 0.97, 0.99, 1.0], default=0.97)
-            # lr_schedule = LRWarmUp(
-            #     initial_learning_rate=lr,
-            #     decay_schedule_fn=tf.keras.optimizers.schedules.ExponentialDecay(
-            #         lr,
-            #         decay_steps=1,
-            #         decay_rate=decay_rate,
-            #     ),
-            #     warmup_steps=4,
-            # )
-            # clipnorm = hp.Choice("clipnorm", values=[0.5, 1.0, 2.0, 5.0], default=1.0)
+        def getModelClass(string):
+            if string == "SqueezeNetSmall":
+                return SqueezeNetSmall # Trainable params: 256,818 (1003.20 KB)
+            elif string == "SqueezeNetMedium":
+                return SqueezeNetMedium # Trainable params: 346,066 (1.32 MB)
+            elif string == "SqueezeNet":
+                return SqueezeNet  # Trainable params: 736,450 (2.81 MB)
+            elif string == "SqueezeNetv1_1":
+                return SqueezeNetv1_1  # Trainable params: 723,522 (2.76 MB)
+            elif string == "SqueezeNetv1_1Small":
+                return SqueezeNetv1_1Small  # Trainable params: 479,106 (1.83 MB)
 
-            beta_1 = hp.Choice("beta_1", values=[0.0, 0.5, 0.7, 0.8, 0.9, 0.95], default=FLAGS.beta_1)
+        model_arch = getModelClass(model_arch_str)
+        inputs, outputs = model_arch(2, weight_decay, inputs=input_shape, residual=residual)
+
+        model = tf_shell_ml.PostScaleModel(
+            inputs=inputs,
+            outputs=outputs,
+            ubatch_per_batch=2**5,  # 8x24GB GPUs
+            backprop_context_fn=backprop_context_fn,
+            noise_context_fn=noise_context_fn,
+            noise_multiplier_fn=noise_multiplier_fn,
+            labels_party_dev=self.labels_party_dev,
+            features_party_dev=self.features_party_dev,
+            cache_path=self.cache_path,
+            jacobian_devices=self.jacobian_devs,
+            disable_he_backprop_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
+            disable_masking_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
+            simple_noise_INSECURE= FLAGS.dp_sgd or FLAGS.rand_resp,
+            clip_threshold=clip_threshold,
+            check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
+        )
+
+        model.build((None,) + input_shape)
+        model.summary()
+
+        # Learning rate warm up is good practice for large batch sizes.
+        # see https://arxiv.org/pdf/1706.02677
+        lr = hp.Choice("learning_rate", values=[1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 1e-6], default=FLAGS.learning_rate)
+        # warmup_steps = hp.Choice("warmup_steps", values=[0, 2, 4], default=0)
+        # decay_rate = hp.Choice("decay_rate", values=[0.95, 0.97, 0.99, 1.0], default=0.97)
+        # lr_schedule = LRWarmUp(
+        #     initial_learning_rate=lr,
+        #     decay_schedule_fn=tf.keras.optimizers.schedules.ExponentialDecay(
+        #         lr,
+        #         decay_steps=1,
+        #         decay_rate=decay_rate,
+        #     ),
+        #     warmup_steps=4,
+        # )
+        # clipnorm = hp.Choice("clipnorm", values=[0.5, 1.0, 2.0, 5.0], default=1.0)
+
+        beta_1 = hp.Choice("beta_1", values=[0.0, 0.5, 0.7, 0.8, 0.9, 0.95], default=FLAGS.beta_1)
         
-            model.compile(
-                loss=tf.keras.losses.CategoricalCrossentropy(),
-                #optimizer=tf.keras.optimizers.Adam(
-                #    learning_rate=lr_schedule, 
-                #    beta_1=beta_1, 
-                #    # clipnorm=clipnorm
-                #),
-                optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate, beta_1=beta_1),
-                metrics=[tf.keras.metrics.CategoricalAccuracy()],
-            )
+        model.compile(
+            loss=tf.keras.losses.CategoricalCrossentropy(),
+            #optimizer=tf.keras.optimizers.Adam(
+            #    learning_rate=lr_schedule, 
+            #    beta_1=beta_1, 
+            #    # clipnorm=clipnorm
+            #),
+            optimizer=tf.keras.optimizers.Adam(FLAGS.learning_rate, beta_1=beta_1),
+            metrics=[tf.keras.metrics.CategoricalAccuracy()],
+        )
 
-            return model
+        return model
 
 def main(_):
     # Allow killing server with control-c
