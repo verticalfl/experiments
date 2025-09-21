@@ -52,6 +52,7 @@ flags.DEFINE_bool("check_overflow", False, "Check for overflow in the protocol."
 flags.DEFINE_bool("tune", False, "Tune hyperparameters (or use default values).")
 FLAGS = flags.FLAGS
 
+clip_by = 0  # Number of pixels to clip from each side of the image.
 
 class HyperModel(kt.HyperModel):
     def __init__(self, labels_party_dev, features_party_dev, jacobian_devs, cache_path, num_examples):
@@ -166,7 +167,7 @@ class HyperModel(kt.HyperModel):
                 batch_size=batch_size,
             )
 
-        input_shape = (784,)
+        input_shape = ((28 - (2 * clip_by))**2,)
         input_img = keras.layers.Input(shape=input_shape)
         x = tf_shell_ml.ShellDense(100, activation=tf.nn.relu, activation_deriv=tf_shell_ml.relu_deriv)(input_img)
         x = tf_shell_ml.ShellDense(10, activation=tf.nn.softmax)(x)
@@ -266,8 +267,11 @@ def main(_):
 
     # Set up training data.
     (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
+    # Clip the input images to make testing faster.
+    x_train = x_train[:, clip_by : (28 - clip_by), clip_by : (28 - clip_by)]
+    x_test = x_test[:, clip_by : (28 - clip_by), clip_by : (28 - clip_by)]
     x_train, x_test = x_train / np.float32(255.0), x_test / np.float32(255.0)
-    x_train, x_test = np.reshape(x_train, (-1, 784)), np.reshape(x_test, (-1, 784))
+    x_train, x_test = np.reshape(x_train, (-1, (28 - (2 * clip_by))**2)), np.reshape(x_test, (-1, (28 - (2 * clip_by))**2))
     y_train, y_test = tf.one_hot(y_train, 10), tf.one_hot(y_test, 10)
 
     # Limit the number of features to reduce the memory footprint for testing.
