@@ -388,7 +388,7 @@ def main(_):
         # TensorBoard kwargs.
         write_steps_per_second=True,
         update_freq="batch",
-        profile_batch=2,
+        # profile_batch=2,
     )
 
     stop_early = tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=5)
@@ -397,14 +397,14 @@ def main(_):
         # Tune the hyperparameters.
         tuner = kt.RandomSearch(
             hypermodel,
-            max_trials=60,
+            max_trials=1000,
             objective=[
                 kt.Objective('val_categorical_accuracy', direction='max'),
-                kt.Objective('time', direction='min')
+                # kt.Objective('time', direction='min')
             ],
             directory="kerastuner",
             project_name="imdb-post-scale",
-            max_consecutive_failed_trials=30,
+            max_consecutive_failed_trials=200,
         )
         tuner.search_space_summary()
         tuner.search(
@@ -431,7 +431,7 @@ def main(_):
             max_trials=1,
             objective=[
                 kt.Objective('val_categorical_accuracy', direction='max'),
-                kt.Objective('time', direction='min')
+                # kt.Objective('time', direction='min')
             ],
             directory="kerastuner",
             project_name="default_hps",

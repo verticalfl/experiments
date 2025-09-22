@@ -707,13 +707,13 @@ def main(_):
         # Tune the hyperparameters.
         tuner = kt.RandomSearch(
             hypermodel,
-            max_trials=60,
+            max_trials=1000,
             objective=[
                 kt.Objective('val_categorical_accuracy', direction='max'),
             ],
             directory="kerastuner",
             project_name=name,
-            max_consecutive_failed_trials=30,
+            max_consecutive_failed_trials=200,
         )
         tuner.search_space_summary()
 
