@@ -56,8 +56,8 @@ flags.DEFINE_bool("tune", False, "Tune hyperparameters (or use default values)."
 FLAGS = flags.FLAGS
 
 sentence_length = 64
-# max_vocab_size = 10000  # 810 GB RAM
-max_vocab_size = 20000  # 1.3 TB RAM
+max_vocab_size = 10000  # 810 GB RAM
+# max_vocab_size = 20000  # 1.3 TB RAM. Works locally on a3-highgpu-8g but not distributed.
 
 class HyperModel(kt.HyperModel):
     def __init__(self, labels_party_dev, features_party_dev, jacobian_devs, cache_path, vocab_size, num_examples):
@@ -67,8 +67,6 @@ class HyperModel(kt.HyperModel):
         self.vocab_size = vocab_size
         self.cache_path = cache_path
         self.num_examples = num_examples
-        #self.strategy = tf.distribute.MirroredStrategy(devices=[features_party_dev] + self.jacobian_devs)
-        self.strategy = tf.distribute.MirroredStrategy(devices=self.jacobian_devs)
 
     def hp_hash(self, hp_dict):
         """Returns a stable short hash for a dictionary of hyperparameter values."""
@@ -110,156 +108,154 @@ class HyperModel(kt.HyperModel):
         return super().fit(hp, model, *args, **kwargs)
 
     def build(self, hp):
-        with self.strategy.scope():
-            # Define functions which generate encryption context for the
-            # backpropagation and noise parts of the protocol. When not executing
-            # eagerly, autocontext can be used to automatically determine the
-            # encryption parameters. When executing eagerly, parameters must be
-            # specified manually (or simply copied from a previous run which uses
-            # autocontext).
-            backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=16, max_value=28, step=1, default=FLAGS.backprop_cleartext_sz)
-            backprop_scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
-            backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 16, 20, 32, 40], default=FLAGS.backprop_noise_offset)
+        # Define functions which generate encryption context for the
+        # backpropagation and noise parts of the protocol. When not executing
+        # eagerly, autocontext can be used to automatically determine the
+        # encryption parameters. When executing eagerly, parameters must be
+        # specified manually (or simply copied from a previous run which uses
+        # autocontext).
+        backprop_cleartext_sz=hp.Int("backprop_cleartext_sz", min_value=16, max_value=28, step=1, default=FLAGS.backprop_cleartext_sz)
+        backprop_scaling_factor=hp.Choice("backprop_scaling_factor", values=[2, 4, 8, 16, 32], default=FLAGS.backprop_scaling_factor)
+        backprop_noise_offset=hp.Choice("backprop_noise_offset", values=[0, 8, 16, 20, 32, 40], default=FLAGS.backprop_noise_offset)
 
-            noise_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
-            noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
-            # 0 and 40 correspond to ring degree of 2**12 and 2**13
+        noise_cleartext_sz=hp.Int("noise_cleartext_sz", min_value=36, max_value=36, step=1, default=FLAGS.noise_cleartext_sz)
+        noise_noise_offset=hp.Choice("noise_noise_offset", values=[0, 40], default=FLAGS.noise_noise_offset)
+        # 0 and 40 correspond to ring degree of 2**12 and 2**13
 
-            clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=1.0)
+        clip_threshold = hp.Float("clip_threshold", min_value=1.0, max_value=20.0, step=1.0, default=1.0)
 
-            def backprop_context_fn(read_cache):
-                if FLAGS.eager_mode:
-                    return tf_shell.create_context64(
-                        log_n=12,
-                        main_moduli=[1688880462102529, 2181470596882433],
-                        plaintext_modulus=8590090241,
-                        scaling_factor=FLAGS.backprop_scaling_factor,
-                    )
-                else:
-                    return tf_shell.create_autocontext64(
-                        log2_cleartext_sz=backprop_cleartext_sz,
-                        scaling_factor=backprop_scaling_factor,
-                        noise_offset_log2=backprop_noise_offset,
-                        read_from_cache=read_cache,
-                        cache_path=self.cache_path,
-                    )
-
-            def noise_context_fn(read_cache):
-                if FLAGS.eager_mode:
-                    return tf_shell.create_context64(
-                        log_n=12,
-                        main_moduli=[6192450225922049, 16325550595612673],
-                        plaintext_modulus=68719484929,
-                    )
-                else:
-                    return tf_shell.create_autocontext64(
-                        log2_cleartext_sz=noise_cleartext_sz,
-                        noise_offset_log2=noise_noise_offset,
-                        read_from_cache=read_cache,
-                        cache_path=self.cache_path,
-                    )
-
-            def noise_multiplier_fn(batch_size):
-                # If doing randomized response, we don't need to compute the noise
-                # multiplier. Return 0 to disable noise.
-                if FLAGS.rand_resp:
-                    return 0.0
-                # Set delta to 1/num_examples, rounded to nearest power of 10.
-                target_delta = 10**int(math.floor(math.log10(1 / self.num_examples)))
-                print(f"Target delta {target_delta}")
-                return search_noise_multiplier(
-                    target_epsilon=FLAGS.epsilon,
-                    target_delta=target_delta,
-                    epochs=FLAGS.epochs,
-                    training_num_samples=self.num_examples,
-                    batch_size=batch_size,
+        def backprop_context_fn(read_cache):
+            if FLAGS.eager_mode:
+                return tf_shell.create_context64(
+                    log_n=12,
+                    main_moduli=[1688880462102529, 2181470596882433],
+                    plaintext_modulus=8590090241,
+                    scaling_factor=FLAGS.backprop_scaling_factor,
+                )
+            else:
+                return tf_shell.create_autocontext64(
+                    log2_cleartext_sz=backprop_cleartext_sz,
+                    scaling_factor=backprop_scaling_factor,
+                    noise_offset_log2=backprop_noise_offset,
+                    read_from_cache=read_cache,
+                    cache_path=self.cache_path,
                 )
 
-            embedding_dim = hp.Choice("embedding_dim", values=[16, 32], default=16)
+        def noise_context_fn(read_cache):
+            if FLAGS.eager_mode:
+                return tf_shell.create_context64(
+                    log_n=12,
+                    main_moduli=[6192450225922049, 16325550595612673],
+                    plaintext_modulus=68719484929,
+                )
+            else:
+                return tf_shell.create_autocontext64(
+                    log2_cleartext_sz=noise_cleartext_sz,
+                    noise_offset_log2=noise_noise_offset,
+                    read_from_cache=read_cache,
+                    cache_path=self.cache_path,
+                )
 
-            input_shape = (sentence_length, 3)
-            #input_shape = {
-            #    "token_ids": (None, 128),
-            #    "padding_mask": (None, 128),
-            #    "segment_ids": (None, 128),
-            #}
-            ##input_layer = keras.layers.Input(shape=input_shape)
-
-            # Define the single input layer that expects the stacked tensor
-            single_input = keras.layers.Input(shape=(sentence_length, 3), dtype=tf.int32, name="stacked_input")
-            
-            # Slice the single tensor back into 3 separate tensors.
-            token_ids = single_input[..., 0]
-            padding_mask = single_input[..., 1]
-            segment_ids = single_input[..., 2]
-            
-            # Create the dictionary that the original model expects
-            bert_inputs = {
-                "token_ids": token_ids,
-                "padding_mask": padding_mask,
-                "segment_ids": segment_ids,
-            }
-            backbone = keras_hub.models.BertBackbone(
-                vocabulary_size=self.vocab_size,
-                num_layers=2,
-                num_heads=2,
-                hidden_dim=128,  # bert tiny
-                #hidden_dim=64,
-                intermediate_dim=512,  # bert tiny
-                #intermediate_dim=64,
-                max_sequence_length=sentence_length,
-            )(bert_inputs)
-            x = backbone["pooled_output"]
-            x = tf.keras.layers.Dropout(0.5)(x)
-            x = tf.keras.layers.Dense(
-                2,
-                activation=tf.nn.softmax,
-            )(x)
-
-            # Create the model.
-            model = tf_shell_ml.PostScaleModel(
-                inputs=single_input,
-                outputs=x,
-                ubatch_per_batch=2**3,  # h100
-                backprop_context_fn=backprop_context_fn,
-                noise_context_fn=noise_context_fn,
-                noise_multiplier_fn=noise_multiplier_fn,
-                labels_party_dev=self.labels_party_dev,
-                features_party_dev=self.features_party_dev,
-                cache_path=self.cache_path,
-                jacobian_devices=self.jacobian_devs,
-                disable_he_backprop_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
-                disable_masking_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
-                simple_noise_INSECURE= FLAGS.dp_sgd or FLAGS.rand_resp,
-                clip_threshold=clip_threshold,
-                check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
-                jacobian_strategy=self.strategy,
-            )
-            model.build( (None,) + input_shape)
-            model.summary()
-
-            # Learning rate warm up is good practice for large batch sizes.
-            # see https://arxiv.org/pdf/1706.02677
-            lr = hp.Choice("learning_rate", values=[0.1, 0.01, 0.001], default=FLAGS.learning_rate)
-            lr_schedule = LRWarmUp(
-                initial_learning_rate=lr,
-                decay_schedule_fn=tf.keras.optimizers.schedules.ExponentialDecay(
-                    lr,
-                    decay_steps=1,
-                    decay_rate=1,  # No decay.
-                ),
-                warmup_steps=4,
+        def noise_multiplier_fn(batch_size):
+            # If doing randomized response, we don't need to compute the noise
+            # multiplier. Return 0 to disable noise.
+            if FLAGS.rand_resp:
+                return 0.0
+            # Set delta to 1/num_examples, rounded to nearest power of 10.
+            target_delta = 10**int(math.floor(math.log10(1 / self.num_examples)))
+            print(f"Target delta {target_delta}")
+            return search_noise_multiplier(
+                target_epsilon=FLAGS.epsilon,
+                target_delta=target_delta,
+                epochs=FLAGS.epochs,
+                training_num_samples=self.num_examples,
+                batch_size=batch_size,
             )
 
-            beta_1 = hp.Choice("beta_1", values=[0.7, 0.8, 0.9], default=FLAGS.beta_1)
+        embedding_dim = hp.Choice("embedding_dim", values=[16, 32], default=16)
 
-            model.compile(
-                loss=tf.keras.losses.CategoricalCrossentropy(),
-                optimizer=tf.keras.optimizers.Adam(lr_schedule, beta_1=beta_1),
-                metrics=[tf.keras.metrics.CategoricalAccuracy()],
-            )
+        input_shape = (sentence_length, 3)
+        #input_shape = {
+        #    "token_ids": (None, 128),
+        #    "padding_mask": (None, 128),
+        #    "segment_ids": (None, 128),
+        #}
+        ##input_layer = keras.layers.Input(shape=input_shape)
 
-            return model
+        # Define the single input layer that expects the stacked tensor
+        single_input = keras.layers.Input(shape=(sentence_length, 3), dtype=tf.int32, name="stacked_input")
+        
+        # Slice the single tensor back into 3 separate tensors.
+        token_ids = single_input[..., 0]
+        padding_mask = single_input[..., 1]
+        segment_ids = single_input[..., 2]
+        
+        # Create the dictionary that the original model expects
+        bert_inputs = {
+            "token_ids": token_ids,
+            "padding_mask": padding_mask,
+            "segment_ids": segment_ids,
+        }
+        backbone = keras_hub.models.BertBackbone(
+            vocabulary_size=self.vocab_size,
+            num_layers=2,
+            num_heads=2,
+            hidden_dim=128,  # bert tiny
+            #hidden_dim=64,
+            intermediate_dim=512,  # bert tiny
+            #intermediate_dim=64,
+            max_sequence_length=sentence_length,
+        )(bert_inputs)
+        x = backbone["pooled_output"]
+        x = tf.keras.layers.Dropout(0.5)(x)
+        x = tf.keras.layers.Dense(
+            2,
+            activation=tf.nn.softmax,
+        )(x)
+
+        # Create the model.
+        model = tf_shell_ml.PostScaleModel(
+            inputs=single_input,
+            outputs=x,
+            ubatch_per_batch=2**3,  # h100
+            backprop_context_fn=backprop_context_fn,
+            noise_context_fn=noise_context_fn,
+            noise_multiplier_fn=noise_multiplier_fn,
+            labels_party_dev=self.labels_party_dev,
+            features_party_dev=self.features_party_dev,
+            cache_path=self.cache_path,
+            jacobian_devices=self.jacobian_devs,
+            disable_he_backprop_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
+            disable_masking_INSECURE=FLAGS.dp_sgd or FLAGS.rand_resp,
+            simple_noise_INSECURE= FLAGS.dp_sgd or FLAGS.rand_resp,
+            clip_threshold=clip_threshold,
+            check_overflow_INSECURE=FLAGS.check_overflow or FLAGS.tune,
+        )
+        model.build( (None,) + input_shape)
+        model.summary()
+
+        # Learning rate warm up is good practice for large batch sizes.
+        # see https://arxiv.org/pdf/1706.02677
+        lr = hp.Choice("learning_rate", values=[0.1, 0.01, 0.001], default=FLAGS.learning_rate)
+        lr_schedule = LRWarmUp(
+            initial_learning_rate=lr,
+            decay_schedule_fn=tf.keras.optimizers.schedules.ExponentialDecay(
+                lr,
+                decay_steps=1,
+                decay_rate=1,  # No decay.
+            ),
+            warmup_steps=4,
+        )
+
+        beta_1 = hp.Choice("beta_1", values=[0.7, 0.8, 0.9], default=FLAGS.beta_1)
+
+        model.compile(
+            loss=tf.keras.losses.CategoricalCrossentropy(),
+            optimizer=tf.keras.optimizers.Adam(lr_schedule, beta_1=beta_1),
+            metrics=[tf.keras.metrics.CategoricalAccuracy()],
+        )
+
+        return model
 
 def main(_):
     # Allow killing server with control-c
