@@ -308,6 +308,13 @@ def main(_):
         # The labels party just runs the server while the training is driven by the
         # features party.
         if this_job == labels_party_job:
+            # Ensure the dataset is downloaded.
+            train_data, val_data = tfds.load(
+                name="imdb_reviews",
+                split=("train", "test"),
+                as_supervised=True,
+            )
+
             print(f"{this_job} server started.", flush=True)
             server.join()  # Wait for the features party to finish.
             exit(0)
