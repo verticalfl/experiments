@@ -395,14 +395,14 @@ def main(_):
             labels_party_dev=labels_party_dev,
             features_party_dev=features_party_dev,
             jacobian_devs=jacobian_dev,
-            cache_path="cache-imdb-postscale",
+            cache_path="cache-bert-postscale",
             vocab_size=vocab_size,
             num_examples=num_examples,
         )
 
     # Set up tensorboard logging.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    logdir = os.path.abspath("") + f"/tflogs/imdb-post-scale-{stamp}"
+    logdir = os.path.abspath("") + f"/tflogs/bert-post-scale-{stamp}"
 
     tb = TensorBoard(
         logdir,
@@ -432,7 +432,7 @@ def main(_):
                 # kt.Objective('time', direction='min')
             ],
             directory="kerastuner",
-            project_name="imdb-post-scale",
+            project_name="bert-post-scale",
             max_consecutive_failed_trials=200,
         )
         tuner.search_space_summary()
@@ -470,7 +470,7 @@ def main(_):
         trial = tuner.oracle.create_trial("single_run_trial")
 
         # Remove the cache path to ignore errors from previous runs.
-        dirpath = os.path.abspath("") + "/cache-imdb-postscale"
+        dirpath = os.path.abspath("") + "/cache-bert-postscale"
         if os.path.exists(dirpath):
             shutil.rmtree(dirpath)
 
