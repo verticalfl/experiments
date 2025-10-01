@@ -418,7 +418,7 @@ def main(_):
                 # kt.Objective('time', direction='min')
             ],
             directory="kerastuner",
-            project_name="imdb-post-scale",
+            project_name="bert-finetune-post-scale",
             max_consecutive_failed_trials=200,
         )
         tuner.search_space_summary()
