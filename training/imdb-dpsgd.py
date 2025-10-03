@@ -184,7 +184,7 @@ class HyperModel(kt.HyperModel):
             skip_embeddings_below_index=50,  # Skip the most common words.
         )(input_layer)
         # x = tf_shell_ml.ShellDropout(0.5)(x)
-        x = tf.keras.layers.GlobalAveragePooling1D()(x)
+        x = tf_shell_ml.GlobalAveragePooling1D()(x)
         x = tf_shell_ml.ShellDropout(0.5)(x)
         x = tf_shell_ml.ShellDense(
             2,
